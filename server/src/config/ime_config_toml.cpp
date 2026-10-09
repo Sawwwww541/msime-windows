@@ -357,7 +357,19 @@ std::map<std::string, std::string> ParseTomlAssignments(const std::string &text)
     std::map<std::string, std::string> values;
     ForEachTomlAssignment(
         text, [&](const std::string &section, const std::string &key, size_t value_begin, size_t value_end) {
-            values[MakeTomlAssignmentId(section, key)] = text.substr(value_begin, value_end - value_begin);
+            const std::string raw_value = text.substr(value_begin, value_end - value_begin);
+            // 凭证在磁盘上是 DPAPI 密文，这里换回明文：调用方（模板合并、凭证重放、损坏配置抢救）
+            // 拿到的一律是明文，写回时再由 SealConfigSecrets 统一封装。非凭证值原样返回。
+            if (!IsSensitiveConfigKey(section, key))
+            {
+                values[MakeTomlAssignmentId(section, key)] = raw_value;
+                return;
+            }
+            const std::string quoted = UnquoteTomlScalar(raw_value);
+            // 只有确实是本方案的密文才改写形状。非密文原样返回：用户手写的单引号字面量
+            // （api_key = 'sk-x'）不该因为这次读盘被换成双引号，那是用户没做过的编辑。
+            values[MakeTomlAssignmentId(section, key)] =
+                IsSealedSecret(quoted) ? EscapeTomlBasicString(UnsealSecret(quoted)) : raw_value;
         });
     return values;
 }

@@ -334,6 +334,25 @@ void RememberConfigWriteTime()
 
 namespace
 {
+// 凭证在 config.toml 里是 DPAPI 密文（见 ime_config_secrets.h）。这里刻意「不顺带解密」：让明文
+// 常驻内存正是攻击脚本能在进程内存里捞到 API key 的原因，所以全局配置只保存存储形态，真正的
+// 明文只在即将发往网络时由调用点解出来（cloud_translation.cpp / voice_input_service.cpp /
+// ai_assistant.cpp / doubao_asr_client.cpp），存活范围就是一个请求。
+//
+// 只有落在凭证表里的键才处理，普通字段原样返回，以后新增的同名字段不会被误当密文。另外顺手补
+// 一次封装：手工把明文写进配置、或上一次封装恰好失败时，内存与磁盘的形态仍然一致。
+std::string StoredSecret(const toml::node_view<toml::node> &node, std::string_view section, std::string_view key)
+{
+    const std::string stored = node.value_or(std::string());
+    if (stored.empty() || !ime_config_detail::IsSensitiveConfigKey(section, key))
+    {
+        return stored;
+    }
+    const std::string sealed = ime_config_detail::SealSecret(stored);
+    // 封装不可用时退回原值：宁可这一轮带着明文（磁盘上也还是明文），也不能凭空把用户的凭证抹掉。
+    return sealed.empty() ? stored : sealed;
+}
+
 bool LoadImeConfig()
 {
     ConfigFileLock lock;
@@ -698,15 +717,16 @@ bool LoadImeConfig()
         voice.hotkey_rctrl_ralt = tbl["voice_input"]["hotkey_rctrl_ralt"].value_or(false);
         voice.hotkey_hold_space_lock = tbl["voice_input"]["hotkey_hold_space_lock"].value_or(true);
         voice.asr_provider = tbl["voice_input"]["asr_provider"].value_or(std::string("doubao"));
-        voice.asr_app_key = tbl["voice_input"]["asr_app_key"].value_or(std::string());
+        voice.asr_app_key = StoredSecret(tbl["voice_input"]["asr_app_key"], "voice_input", "asr_app_key");
         voice.doubao_auth_mode = VoiceInput::NormalizeDoubaoAuthMode(
             tbl["voice_input"]["doubao_auth_mode"].value_or(std::string()), voice.asr_app_key);
-        voice.asr_token = tbl["voice_input"]["asr_token"].value_or(std::string());
+        voice.asr_token = StoredSecret(tbl["voice_input"]["asr_token"], "voice_input", "asr_token");
         for (const auto provider : VoiceInput::AsrProviders())
         {
             const std::string id(provider);
+            const std::string slot_key(VoiceInput::AsrTokenSlotKey(id));
             voice.asr_tokens[id] =
-                VoiceInput::UsableToken(tbl["voice_input"][VoiceInput::AsrTokenSlotKey(id)].value_or(std::string()));
+                VoiceInput::UsableToken(StoredSecret(tbl["voice_input"][slot_key], "voice_input", slot_key));
         }
         {
             const std::string provider = VoiceInput::NormalizeProviderId(voice.asr_provider);
@@ -734,12 +754,13 @@ bool LoadImeConfig()
         voice.doubao_boosting_table_id = tbl["voice_input"]["doubao_boosting_table_id"].value_or(std::string());
         voice.asr_model = tbl["voice_input"]["asr_model"].value_or(std::string());
         voice.polish_provider = tbl["voice_input"]["polish_provider"].value_or(std::string("siliconflow"));
-        voice.polish_token = tbl["voice_input"]["polish_token"].value_or(std::string());
+        voice.polish_token = StoredSecret(tbl["voice_input"]["polish_token"], "voice_input", "polish_token");
         for (const auto provider : VoiceInput::PolishProviders())
         {
             const std::string id(provider);
+            const std::string slot_key(VoiceInput::PolishTokenSlotKey(id));
             voice.polish_tokens[id] =
-                VoiceInput::UsableToken(tbl["voice_input"][VoiceInput::PolishTokenSlotKey(id)].value_or(std::string()));
+                VoiceInput::UsableToken(StoredSecret(tbl["voice_input"][slot_key], "voice_input", slot_key));
         }
         {
             const std::string provider = VoiceInput::NormalizeProviderId(voice.polish_provider);
@@ -789,13 +810,14 @@ bool LoadImeConfig()
             VoiceInput::NormalizeProviderId(tbl["ai_assistant"]["provider"].value_or(std::string("deepseek")));
         if (AiAssistantTokenSlotKey(g_ai_assistant.provider).empty())
             g_ai_assistant.provider = "deepseek";
-        g_ai_assistant.token = tbl["ai_assistant"]["token"].value_or(std::string());
+        g_ai_assistant.token = StoredSecret(tbl["ai_assistant"]["token"], "ai_assistant", "token");
         g_ai_assistant.tokens.clear();
         for (const auto provider : AiAssistantProviders())
         {
             const std::string id(provider);
+            const std::string slot_key(AiAssistantTokenSlotKey(id));
             g_ai_assistant.tokens[id] =
-                VoiceInput::UsableToken(tbl["ai_assistant"][AiAssistantTokenSlotKey(id)].value_or(std::string()));
+                VoiceInput::UsableToken(StoredSecret(tbl["ai_assistant"][slot_key], "ai_assistant", slot_key));
         }
         {
             std::string &stored = g_ai_assistant.tokens[g_ai_assistant.provider];
@@ -841,8 +863,8 @@ bool LoadImeConfig()
                                 : g_ai_assistant.prompt_id == "custom_3" ? g_ai_assistant.prompt_custom_3
                                                                          : g_ai_assistant.prompt_custom_1;
         g_tencent_tmt.enabled = tbl["tencent_tmt"]["enabled"].value_or(true);
-        g_tencent_tmt.secret_id = tbl["tencent_tmt"]["secret_id"].value_or(std::string());
-        g_tencent_tmt.secret_key = tbl["tencent_tmt"]["secret_key"].value_or(std::string());
+        g_tencent_tmt.secret_id = StoredSecret(tbl["tencent_tmt"]["secret_id"], "tencent_tmt", "secret_id");
+        g_tencent_tmt.secret_key = StoredSecret(tbl["tencent_tmt"]["secret_key"], "tencent_tmt", "secret_key");
         g_tencent_tmt.region = tbl["tencent_tmt"]["region"].value_or(std::string("ap-guangzhou"));
         if (g_tencent_tmt.region.empty())
             g_tencent_tmt.region = "ap-guangzhou";
@@ -854,10 +876,11 @@ bool LoadImeConfig()
             g_tencent_tmt.target_language = "en";
         g_custom_translation.enabled = tbl["custom_translation"]["enabled"].value_or(false);
         g_custom_translation.endpoint = tbl["custom_translation"]["endpoint"].value_or(std::string());
-        g_custom_translation.api_key = tbl["custom_translation"]["api_key"].value_or(std::string());
+        g_custom_translation.api_key =
+            StoredSecret(tbl["custom_translation"]["api_key"], "custom_translation", "api_key");
         g_niutrans.enabled = tbl["niutrans"]["enabled"].value_or(false);
-        g_niutrans.app_id = tbl["niutrans"]["app_id"].value_or(std::string());
-        g_niutrans.apikey = tbl["niutrans"]["apikey"].value_or(std::string());
+        g_niutrans.app_id = StoredSecret(tbl["niutrans"]["app_id"], "niutrans", "app_id");
+        g_niutrans.apikey = StoredSecret(tbl["niutrans"]["apikey"], "niutrans", "apikey");
         {
             NetworkProxyConfig proxy;
             proxy.mode = tbl["network"]["proxy_mode"].value_or(std::string("system"));
@@ -918,8 +941,10 @@ void MigrateLegacyVoiceInputConfig()
         if (asr_token.empty())
             return;
         const auto migrate_string = [](const std::string &key, const std::string &value, std::string &target) {
+            // 旧配置里是明文，落盘会被写入路径封装；内存也必须跟着存密文，否则这条迁移路径
+            // 会把明文留在一个长期存活的结构里。非凭证键原样返回。
             if (WriteConfiguredValue("voice_input", key, EscapeTomlBasicString(value)))
-                target = value;
+                target = ime_config_detail::SealForMemory("voice_input", key, value);
         };
         const auto migrate_bool = [](const std::string &key, bool value, bool &target) {
             if (WriteConfiguredValue("voice_input", key, value ? "true" : "false"))
@@ -982,6 +1007,9 @@ void InitImeConfig()
     CommonUtils::ensure_ime_data_writable();
     RecoverLegacyAcpMangledConfig();
     SyncConfigWithInstalledTemplate();
+    // 老版本把凭证明文写在 config.toml 里。升级后第一次启动就地把剩余的明文封上：用户不用重填，
+    // 磁盘上也不会再留着明文。必须在 LoadImeConfig 之前跑，否则内存里拿到的就是明文。
+    SealPlaintextConfigSecretsOnDisk();
     if (LoadImeConfig())
     {
         MigrateLegacyVoiceInputConfig();
@@ -1035,6 +1063,9 @@ bool ReloadImeConfigIfChanged()
     {
         return false;
     }
+    // 有人（用户拿编辑器改、别的工具生成）往 config.toml 里写了明文凭证：这次重新加载顺手封上，
+    // 封完时间戳更新，下一次轮询不会因为这次改写再触发一次。
+    SealPlaintextConfigSecretsOnDisk();
     return LoadImeConfig();
 }
 

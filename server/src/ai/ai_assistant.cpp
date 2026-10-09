@@ -1,6 +1,7 @@
 #include "ai_assistant.h"
 #include "ai_assistant_cache.h"
 #include "ai_assistant_cache_key.h"
+#include "config/ime_config_secrets.h"
 
 #include "utils/network_proxy.h"
 #include <curl/curl.h>
@@ -67,7 +68,8 @@ std::string Fetch(const AiAssistant::Request &request, uint64_t generation)
     if (!curl)
         return {};
     std::string response;
-    const std::string authorization = "Authorization: Bearer " + config.token;
+    // 配置里存的是 DPAPI 密文，只有在这一刻（拼请求头）才解出来，明文随之活在这一个请求里。
+    const std::string authorization = "Authorization: Bearer " + ime_config_detail::UnsealSecret(config.token);
     curl_slist *headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     headers = curl_slist_append(headers, authorization.c_str());

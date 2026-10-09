@@ -5,6 +5,7 @@
 
 #include "voice_input_service.h"
 #include "config/ime_config.h"
+#include "config/ime_config_secrets.h"
 #include "doubao_asr_client.h"
 #include "voice_providers.h"
 #include "voice_batch_protocol.h"
@@ -505,9 +506,11 @@ std::string JsonErrorMessage(const std::string &body)
 
 RecognitionResult Recognize(const std::vector<float> &samples, const VoiceInputConfig &config)
 {
-    const std::string asr_token = VoiceInput::ResolveAsrToken(config);
-    if (asr_token.empty() || config.asr_endpoint.empty())
+    // 配置里存的是 DPAPI 密文，明文只在这一刻解出来，生命周期等于这次识别请求。
+    const std::string stored_asr_token = VoiceInput::ResolveAsrToken(config);
+    if (stored_asr_token.empty() || config.asr_endpoint.empty())
         return {{}, "ASR Token 或接口地址为空。"};
+    const std::string asr_token = ime_config_detail::UnsealSecret(stored_asr_token);
     const std::string model_name = VoiceInput::ResolveAsrModel(config);
     if (model_name.empty())
         return {{}, "ASR 模型名为空。"};
@@ -603,7 +606,8 @@ std::string Polish(const std::string &text, const VoiceInputConfig &config)
 {
     if (!ShouldPolish(text, config))
         return text;
-    const std::string polish_token = VoiceInput::ResolvePolishToken(config);
+    // 同 Recognize：明文只在拼这个 Authorization 头时存在。
+    const std::string polish_token = ime_config_detail::UnsealSecret(VoiceInput::ResolvePolishToken(config));
     std::string payload;
     try
     {
@@ -885,8 +889,10 @@ bool StartRecording()
     if (!config.enabled)
         return false;
     const bool use_doubao = VoiceInput::IsDoubaoAsrProvider(config.asr_provider);
-    const std::string asr_token = VoiceInput::ResolveAsrToken(config);
-    if (asr_token.empty())
+    // 豆包客户端的凭证要活一整个录音会话，所以交给它的是密文，由它在握手那一刻解封（见
+    // doubao_asr_client.cpp）。这里只判「有没有配」。
+    const std::string stored_asr_token = VoiceInput::ResolveAsrToken(config);
+    if (stored_asr_token.empty())
     {
         MessageBoxW(nullptr, L"请先在设置的“语音输入”分区填写当前 ASR 提供商的 API Token。", L"水杉 IME",
                     MB_OK | MB_ICONINFORMATION);
@@ -913,7 +919,7 @@ bool StartRecording()
     if (use_doubao)
     {
         g_doubao_asr = std::make_unique<DoubaoAsrClient>(
-            config.asr_endpoint, VoiceInput::UsesDoubaoLegacyAuth(config), config.asr_app_key, asr_token,
+            config.asr_endpoint, VoiceInput::UsesDoubaoLegacyAuth(config), config.asr_app_key, stored_asr_token,
             config.asr_resource_id, config.doubao_enable_itn, config.doubao_enable_punc, config.doubao_enable_ddc,
             config.doubao_boosting_table_id, [voice_session](const std::string &text) {
                 if (g_voice_session != voice_session)

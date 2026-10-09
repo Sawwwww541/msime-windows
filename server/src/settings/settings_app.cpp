@@ -1,5 +1,6 @@
 #include "engine/contracts/webview/validator.h"
 #include "config/ime_config.h"
+#include "config/ime_config_secrets.h"
 #include "engine/core/data_path.h"
 #include "global/globals.h"
 #include "resource/resource.h"
@@ -52,6 +53,18 @@ namespace json = boost::json;
 
 namespace
 {
+// 逐供应商的凭证映射（asr_tokens / polish_tokens / ai.tokens）同样要收敛成哨兵；
+// 空串和出厂占位符原样保留，页面才能看出「这个供应商还没配」。
+std::map<std::string, std::string> MaskCredentialMap(const std::map<std::string, std::string> &values)
+{
+    std::map<std::string, std::string> masked;
+    for (const auto &entry : values)
+    {
+        masked.emplace(entry.first, ime_config_detail::MaskSealedCredential(entry.second));
+    }
+    return masked;
+}
+
 constexpr wchar_t kWindowClass[] = L"MetasequoiaImeSettingsWindow";
 constexpr wchar_t kWindowTitle[] = L"Metasequoia IME Settings";
 constexpr wchar_t kSingleInstanceMutex[] = L"Local\\MetasequoiaImeSettings.SingleInstance";
@@ -359,11 +372,12 @@ static nlohmann::json CustomShuangpinSchemasJson()
 std::wstring BuildConfigMessage(bool refresh_skin_catalog)
 {
 
-    const VoiceInputConfig &voice = GetConfiguredVoiceInput();
-    const AiAssistantConfig &ai = GetConfiguredAiAssistant();
-    const TencentTmtConfig &tencent_tmt = GetConfiguredTencentTmt();
-    const CustomTranslationConfig &custom_translation = GetConfiguredCustomTranslation();
-    const NiuTransConfig &niutrans = GetConfiguredNiuTrans();
+    // 凭证相关分节取副本：下面把已配置的凭证换成哨兵再下发，原件不能动（服务调用仍要用真值）。
+    const VoiceInputConfig voice = GetConfiguredVoiceInput();
+    const AiAssistantConfig ai = GetConfiguredAiAssistant();
+    const TencentTmtConfig tencent_tmt = GetConfiguredTencentTmt();
+    const CustomTranslationConfig custom_translation = GetConfiguredCustomTranslation();
+    const NiuTransConfig niutrans = GetConfiguredNiuTrans();
     const NetworkProxyConfig network_proxy = GetConfiguredNetworkProxy();
     const FrequencyAdjustmentConfig &frequency = GetConfiguredFrequencyAdjustment();
     const FloatingToolbarItemsConfig &toolbar = GetConfiguredFloatingToolbarItems();
@@ -607,9 +621,9 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"hotkey_hold_space_lock", voice.hotkey_hold_space_lock},
             {"asr_provider", voice.asr_provider},
             {"doubao_auth_mode", voice.doubao_auth_mode},
-            {"asr_app_key", voice.asr_app_key},
-            {"asr_token", voice.asr_token},
-            {"asr_tokens", voice.asr_tokens},
+            {"asr_app_key", ime_config_detail::MaskSealedCredential(voice.asr_app_key)},
+            {"asr_token", ime_config_detail::MaskSealedCredential(voice.asr_token)},
+            {"asr_tokens", MaskCredentialMap(voice.asr_tokens)},
             {"asr_endpoint", voice.asr_endpoint},
             {"asr_resource_id", voice.asr_resource_id},
             {"doubao_enable_itn", voice.doubao_enable_itn},
@@ -618,8 +632,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"doubao_boosting_table_id", voice.doubao_boosting_table_id},
             {"asr_model", voice.asr_model},
             {"polish_provider", voice.polish_provider},
-            {"polish_token", voice.polish_token},
-            {"polish_tokens", voice.polish_tokens},
+            {"polish_token", ime_config_detail::MaskSealedCredential(voice.polish_token)},
+            {"polish_tokens", MaskCredentialMap(voice.polish_tokens)},
             {"polish_endpoint", voice.polish_endpoint},
             {"polish_model", voice.polish_model},
             {"polish_prompt_id", voice.polish_prompt_id},
@@ -638,8 +652,8 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
           {"ai_assistant",
            {{"enabled", ai.enabled},
             {"provider", ai.provider},
-            {"token", ai.token},
-            {"tokens", ai.tokens},
+            {"token", ime_config_detail::MaskSealedCredential(ai.token)},
+            {"tokens", MaskCredentialMap(ai.tokens)},
             {"endpoint", ai.endpoint},
             {"model", ai.model},
             {"endpoints", ai.endpoints},
@@ -651,15 +665,18 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
             {"prompt_custom_2", ai.prompt_custom_2},
             {"prompt_custom_3", ai.prompt_custom_3}}},
           {"tencent_tmt",
-           {{"secret_id", tencent_tmt.secret_id},
-            {"secret_key", tencent_tmt.secret_key},
+           {{"secret_id", ime_config_detail::MaskSealedCredential(tencent_tmt.secret_id)},
+            {"secret_key", ime_config_detail::MaskSealedCredential(tencent_tmt.secret_key)},
             {"region", tencent_tmt.region},
             {"target_language", tencent_tmt.target_language}}},
           {"custom_translation",
            {{"enabled", custom_translation.enabled},
             {"endpoint", custom_translation.endpoint},
-            {"api_key", custom_translation.api_key}}},
-          {"niutrans", {{"enabled", niutrans.enabled}, {"app_id", niutrans.app_id}, {"apikey", niutrans.apikey}}},
+            {"api_key", ime_config_detail::MaskSealedCredential(custom_translation.api_key)}}},
+          {"niutrans",
+           {{"enabled", niutrans.enabled},
+            {"app_id", ime_config_detail::MaskSealedCredential(niutrans.app_id)},
+            {"apikey", ime_config_detail::MaskSealedCredential(niutrans.apikey)}}},
           {"network", {{"proxy_mode", network_proxy.mode}, {"proxy_server", network_proxy.server}}},
           {"helpcode",
            {{"shuangpin_helpcode", GetConfiguredShuangpinHelpcodeEnabled()},

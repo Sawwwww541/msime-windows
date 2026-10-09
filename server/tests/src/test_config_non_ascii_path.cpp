@@ -1,6 +1,7 @@
 #include "tests/includes/test_framework.h"
 
 #include "config/ime_config.h"
+#include "config/ime_config_secrets.h"
 
 #include <windows.h>
 
@@ -164,12 +165,14 @@ TEST_CASE(ai_provider_configuration_round_trips_without_mixing_credentials)
         REQUIRE_EQ(GetConfiguredAiAssistant().models.at("deepseek"), std::string("custom-deepseek"));
 
         REQUIRE(SetConfiguredAiAssistantString("provider", "openai"));
-        REQUIRE_EQ(GetConfiguredAiAssistant().token, std::string("test-openai"));
+        // 内存里的 token 是密文（见 ime_config_secrets.h 契约），要用就得先解封。
+        REQUIRE(ime_config_detail::IsSealedSecret(GetConfiguredAiAssistant().token));
+        REQUIRE_EQ(ime_config_detail::UnsealSecret(GetConfiguredAiAssistant().token), std::string("test-openai"));
         REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string("https://api.openai.com/v1/chat/completions"));
         REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("gpt-4o-mini"));
         InitImeConfig();
         REQUIRE_EQ(GetConfiguredAiAssistant().provider, std::string("openai"));
-        REQUIRE_EQ(GetConfiguredAiAssistant().token, std::string("test-openai"));
+        REQUIRE_EQ(ime_config_detail::UnsealSecret(GetConfiguredAiAssistant().token), std::string("test-openai"));
         REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string("https://api.openai.com/v1/chat/completions"));
 
         REQUIRE(SetConfiguredAiAssistantString("endpoint", "https://openai.example.test/v1/chat/completions"));
@@ -180,7 +183,7 @@ TEST_CASE(ai_provider_configuration_round_trips_without_mixing_credentials)
         REQUIRE_EQ(GetConfiguredAiAssistant().models.at("openai"), std::string("custom-openai"));
 
         REQUIRE(SetConfiguredAiAssistantString("provider", "deepseek"));
-        REQUIRE_EQ(GetConfiguredAiAssistant().token, std::string("test-deepseek"));
+        REQUIRE_EQ(ime_config_detail::UnsealSecret(GetConfiguredAiAssistant().token), std::string("test-deepseek"));
         REQUIRE_EQ(GetConfiguredAiAssistant().endpoint, std::string("https://deepseek.example.test/chat/completions"));
         REQUIRE_EQ(GetConfiguredAiAssistant().model, std::string("custom-deepseek"));
         InitImeConfig();

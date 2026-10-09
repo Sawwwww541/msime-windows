@@ -33,7 +33,7 @@ bool SetConfiguredVoiceInputString(const std::string &key, const std::string &va
         if (!WriteConfiguredValue("voice_input", toml_key, EscapeTomlBasicString(toml_value)))
             return false;
         std::unique_lock<std::shared_mutex> lock(g_voice_input_mutex);
-        g_voice_input.*field = toml_value;
+        g_voice_input.*field = SealForMemory("voice_input", toml_key, toml_value);
         return true;
     };
 
@@ -48,7 +48,7 @@ bool SetConfiguredVoiceInputString(const std::string &key, const std::string &va
         std::string asr_provider;
         {
             std::unique_lock<std::shared_mutex> lock(g_voice_input_mutex);
-            g_voice_input.asr_tokens[id] = value;
+            g_voice_input.asr_tokens[id] = SealForMemory("voice_input", key, value);
             asr_provider = g_voice_input.asr_provider;
         }
         if (VoiceInput::NormalizeProviderId(asr_provider) == id)
@@ -66,7 +66,7 @@ bool SetConfiguredVoiceInputString(const std::string &key, const std::string &va
         std::string polish_provider;
         {
             std::unique_lock<std::shared_mutex> lock(g_voice_input_mutex);
-            g_voice_input.polish_tokens[id] = value;
+            g_voice_input.polish_tokens[id] = SealForMemory("voice_input", key, value);
             polish_provider = g_voice_input.polish_provider;
         }
         if (VoiceInput::NormalizeProviderId(polish_provider) == id)
@@ -117,7 +117,7 @@ bool SetConfiguredVoiceInputString(const std::string &key, const std::string &va
         return false;
     {
         std::unique_lock<std::shared_mutex> lock(g_voice_input_mutex);
-        g_voice_input.*target = value;
+        g_voice_input.*target = SealForMemory("voice_input", key, value);
     }
     if (key == "polish_prompt_custom_1")
     {
@@ -134,7 +134,7 @@ bool SetConfiguredVoiceInputString(const std::string &key, const std::string &va
             const std::string id = VoiceInput::NormalizeProviderId(asr_provider);
             {
                 std::unique_lock<std::shared_mutex> lock(g_voice_input_mutex);
-                g_voice_input.asr_tokens[id] = value;
+                g_voice_input.asr_tokens[id] = SealForMemory("voice_input", key, value);
             }
             WriteConfiguredValue("voice_input", slot, EscapeTomlBasicString(value));
         }
@@ -148,7 +148,7 @@ bool SetConfiguredVoiceInputString(const std::string &key, const std::string &va
             const std::string id = VoiceInput::NormalizeProviderId(polish_provider);
             {
                 std::unique_lock<std::shared_mutex> lock(g_voice_input_mutex);
-                g_voice_input.polish_tokens[id] = value;
+                g_voice_input.polish_tokens[id] = SealForMemory("voice_input", key, value);
             }
             WriteConfiguredValue("voice_input", slot, EscapeTomlBasicString(value));
         }
@@ -236,7 +236,7 @@ bool SetConfiguredTencentTmtString(const std::string &key, const std::string &va
         target = &g_tencent_tmt.target_language;
     if (!target || !WriteConfiguredValue("tencent_tmt", key, EscapeTomlBasicString(value)))
         return false;
-    *target = value;
+    *target = SealForMemory("tencent_tmt", key, value);
     return true;
 }
 
@@ -262,7 +262,7 @@ bool SetConfiguredCustomTranslationString(const std::string &key, const std::str
         target = &g_custom_translation.api_key;
     if (!target || !WriteConfiguredValue("custom_translation", key, EscapeTomlBasicString(value)))
         return false;
-    *target = value;
+    *target = SealForMemory("custom_translation", key, value);
     return true;
 }
 
@@ -288,7 +288,7 @@ bool SetConfiguredNiuTransString(const std::string &key, const std::string &valu
         target = &g_niutrans.apikey;
     if (!target || !WriteConfiguredValue("niutrans", key, EscapeTomlBasicString(value)))
         return false;
-    *target = value;
+    *target = SealForMemory("niutrans", key, value);
     return true;
 }
 
@@ -432,7 +432,7 @@ bool SetConfiguredAiAssistantString(const std::string &key, const std::string &v
     const auto persist = [](const std::string &toml_key, const std::string &toml_value, std::string &target) {
         if (!WriteConfiguredValue("ai_assistant", toml_key, EscapeTomlBasicString(toml_value)))
             return false;
-        target = toml_value;
+        target = SealForMemory("ai_assistant", toml_key, toml_value);
         return true;
     };
 
@@ -444,7 +444,7 @@ bool SetConfiguredAiAssistantString(const std::string &key, const std::string &v
         if (!WriteConfiguredValue("ai_assistant", key, EscapeTomlBasicString(value)))
             return false;
         const std::string id = VoiceInput::NormalizeProviderId(provider);
-        g_ai_assistant.tokens[id] = value;
+        g_ai_assistant.tokens[id] = SealForMemory("ai_assistant", key, value);
         if (g_ai_assistant.provider == id)
             persist("token", value, g_ai_assistant.token);
         return true;
@@ -465,7 +465,7 @@ bool SetConfiguredAiAssistantString(const std::string &key, const std::string &v
         target = &g_ai_assistant.prompt;
     if (!target || !WriteConfiguredValue("ai_assistant", key, EscapeTomlBasicString(value)))
         return false;
-    *target = value;
+    *target = SealForMemory("ai_assistant", key, value);
     if (key == "prompt_custom_1")
         WriteConfiguredValue("ai_assistant", "prompt", EscapeTomlBasicString(""));
     if (key == "prompt")
@@ -479,7 +479,7 @@ bool SetConfiguredAiAssistantString(const std::string &key, const std::string &v
     if (key == "token")
     {
         const std::string slot = AiAssistantTokenSlotKey(g_ai_assistant.provider);
-        g_ai_assistant.tokens[g_ai_assistant.provider] = value;
+        g_ai_assistant.tokens[g_ai_assistant.provider] = SealForMemory("ai_assistant", key, value);
         WriteConfiguredValue("ai_assistant", slot, EscapeTomlBasicString(value));
     }
     return true;

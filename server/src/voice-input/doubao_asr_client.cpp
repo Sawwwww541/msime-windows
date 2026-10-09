@@ -1,3 +1,4 @@
+#include "config/ime_config_secrets.h"
 #include "doubao_asr_client.h"
 #include "utils/network_proxy.h"
 
@@ -289,16 +290,20 @@ HINTERNET ConnectWebSocket(const std::string &endpoint, bool legacy_auth, const 
     if (!WinHttpSetOption(request.value, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0))
         return nullptr;
     std::wstring headers;
+    // 配置里这两个值是 DPAPI 密文（见 ime_config_secrets.h），握手是它们唯一的用处：只在这里解出来，
+    // 用完即随本函数返回。客户端对象因此不必把明文存一整个录音会话。
+    const std::string plain_app_key = ime_config_detail::UnsealSecret(app_key);
+    const std::string plain_access_key = ime_config_detail::UnsealSecret(access_key);
     if (legacy_auth)
     {
         // Legacy console: App ID/App Key plus Access Token. Secret Key is not used.
-        headers = L"X-Api-App-Key: " + Utf8ToWide(app_key) + L"\r\n" + L"X-Api-Access-Key: " + Utf8ToWide(access_key) +
-                  L"\r\n";
+        headers = L"X-Api-App-Key: " + Utf8ToWide(plain_app_key) + L"\r\n" + L"X-Api-Access-Key: " +
+                  Utf8ToWide(plain_access_key) + L"\r\n";
     }
     else
     {
         // New console: one API Key, no App ID. Any stale app_key in the config is deliberately ignored.
-        headers = L"X-Api-Key: " + Utf8ToWide(access_key) + L"\r\n";
+        headers = L"X-Api-Key: " + Utf8ToWide(plain_access_key) + L"\r\n";
     }
     headers += L"X-Api-Resource-Id: " + Utf8ToWide(resource_id) + L"\r\n" + L"X-Api-Request-Id: " +
                Utf8ToWide(MakeRequestId()) + L"\r\n";

@@ -54,6 +54,66 @@ bool AssignmentHoldsRealCredential(const std::string &assignment_id, const std::
     return !VoiceInput::IsPlaceholderToken(UnquoteTomlScalar(raw_value));
 }
 
+// 损坏留证时不要顺手把明文凭证也留一份。那种文本解析不过，只能按行找 `key = "..."`，好在凭证
+// 永远是单行基本字符串。留证的价值在于看清是什么字符破坏了 TOML，这一点不受影响。
+std::string SealPlaintextSecretsLineOriented(const std::string &text)
+{
+    std::string sealed_text = text;
+    std::string section;
+    size_t line_begin = 0;
+    while (line_begin <= sealed_text.size())
+    {
+        const size_t line_end = sealed_text.find('\n', line_begin);
+        const size_t stop = line_end == std::string::npos ? sealed_text.size() : line_end;
+        const std::string line = sealed_text.substr(line_begin, stop - line_begin);
+        const size_t first = line.find_first_not_of(" \t\r");
+        if (first != std::string::npos && line[first] == '[')
+        {
+            const size_t close = line.find(']', first);
+            if (close != std::string::npos)
+            {
+                section = line.substr(first + 1, close - first - 1);
+            }
+        }
+        else
+        {
+            const size_t equals = line.find('=');
+            if (equals != std::string::npos && equals > first)
+            {
+                std::string key = line.substr(first, equals - first);
+                const size_t key_end = key.find_last_not_of(" \t");
+                if (key_end != std::string::npos)
+                {
+                    key.erase(key_end + 1);
+                }
+                const size_t quote = line.find('"', equals);
+                const size_t closing_quote = quote == std::string::npos ? std::string::npos : line.find('"', quote + 1);
+                if (IsSensitiveConfigKey(section, key) && closing_quote != std::string::npos)
+                {
+                    // 只封「用户填过真值的明文」：空值、出厂占位符和已经是密文的一律原样留证。
+                    const std::string plaintext = line.substr(quote + 1, closing_quote - quote - 1);
+                    const bool needs_sealing =
+                        !plaintext.empty() && !IsSealedSecret(plaintext) && !VoiceInput::IsPlaceholderToken(plaintext);
+                    if (needs_sealing)
+                    {
+                        const std::string value = SealSecret(plaintext);
+                        if (!value.empty())
+                        {
+                            sealed_text.replace(line_begin + quote + 1, closing_quote - quote - 1, value);
+                        }
+                    }
+                }
+            }
+        }
+        if (line_end == std::string::npos)
+        {
+            break;
+        }
+        line_begin = line_end + 1;
+    }
+    return sealed_text;
+}
+
 // 把用户填过真值的凭证逐条重放到 text 上：有键改值，无键则在其分节里插入。幂等——重放已经等于
 // 目标值的凭证不改变结果。既给正常合并兜底（新模板漏掉某个凭证键的模板漂移），也给损坏配置的抢救
 // 路径兜底（整体合并失败、只能回退到出厂模板时，仍保住 token）。
@@ -119,7 +179,8 @@ std::string MergeTomlIntoTemplate(const std::string &template_text, std::map<std
     {
         merged.replace(patch->begin, patch->end - patch->begin, patch->value);
     }
-    return ReapplyRealCredentials(std::move(merged), user_values);
+    merged = ReapplyRealCredentials(std::move(merged), user_values);
+    return merged;
 }
 
 std::filesystem::path AcpDecodedUtf8Path(const std::filesystem::path &wide_path)
@@ -134,15 +195,16 @@ std::filesystem::path AcpDecodedUtf8Path(const std::filesystem::path &wide_path)
     }
 }
 
-// 把一份解析不过的 config.toml 原样留证到 config.toml.corrupt-<时间戳>，方便事后排查到底是什么
-// 字符破坏了 TOML，也给用户一个手工找回的机会。备份失败不影响后续流程。
+// 把一份解析不过的 config.toml 留证到 config.toml.corrupt-<时间戳>，方便事后排查到底是什么
+// 字符破坏了 TOML，也给用户一个手工找回的机会。留证前先把明文凭证封上——坏文件同样是落在用户
+// 目录里的一个纯文本文件，不能因为它「已经坏了」就把凭证明文留在那里。备份失败不影响后续流程。
 void BackupCorruptConfig(const std::string &corrupt_text)
 {
     SYSTEMTIME now{};
     GetLocalTime(&now);
     const std::wstring name = fmt::format(L"config.toml.corrupt-{:04}{:02}{:02}-{:02}{:02}{:02}", now.wYear, now.wMonth,
                                           now.wDay, now.wHour, now.wMinute, now.wSecond);
-    WriteFileBytes(g_config_path.parent_path() / name, corrupt_text);
+    WriteFileBytes(g_config_path.parent_path() / name, SealPlaintextSecretsLineOriented(corrupt_text));
 }
 } // namespace
 
@@ -186,7 +248,10 @@ void RecoverLegacyAcpMangledConfig()
         return;
     }
 
-    if (!WriteFileTextAtomically(g_config_path, mangled_text))
+    // 找回的那份配置里如果有明文凭证，落地前先封上，别让「找回」变成把明文又抄一遍。
+    std::string restored_text = mangled_text;
+    SealConfigSecrets(restored_text);
+    if (!WriteFileTextAtomically(g_config_path, restored_text))
     {
         return;
     }
@@ -239,7 +304,8 @@ void SyncConfigWithInstalledTemplate()
         {
             BackupCorruptConfig(user_text);
             const std::map<std::string, std::string> salvaged_values = ParseTomlAssignments(user_text);
-            const std::string salvaged = MergeTomlIntoTemplate(template_text, salvaged_values, {});
+            std::string salvaged = MergeTomlIntoTemplate(template_text, salvaged_values, {});
+            SealConfigSecrets(salvaged);
             if (TomlTextIsParseable(salvaged))
             {
                 if (WriteFileTextAtomically(g_config_path, salvaged))
@@ -249,7 +315,9 @@ void SyncConfigWithInstalledTemplate()
                 return;
             }
             const std::string fallback = ReapplyRealCredentials(template_text, salvaged_values);
-            if (TomlTextIsParseable(fallback) && WriteFileTextAtomically(g_config_path, fallback))
+            std::string sealed_fallback = fallback;
+            SealConfigSecrets(sealed_fallback);
+            if (TomlTextIsParseable(sealed_fallback) && WriteFileTextAtomically(g_config_path, sealed_fallback))
             {
                 WriteFileTextAtomically(baseline_path, template_text);
                 return;
@@ -268,8 +336,11 @@ void SyncConfigWithInstalledTemplate()
         return;
     }
 
-    const std::string merged =
+    // merged 里的凭证是明文（解析时已解封、重放时按新模板填回），落盘前统一封装。这样
+    // MergeTomlIntoTemplate 保持「文本进、文本出」的纯函数语义，密文形式只由写盘这一步决定。
+    std::string merged =
         MergeTomlIntoTemplate(template_text, ParseTomlAssignments(user_text), ParseTomlAssignments(baseline_text));
+    SealConfigSecrets(merged);
     if (!TomlTextIsParseable(merged))
     {
         return;

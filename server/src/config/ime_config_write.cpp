@@ -38,8 +38,34 @@ bool WriteConfiguredValues(const std::vector<ConfigValueUpdate> &updates)
 
     for (const auto &update : updates)
     {
-        if (!ReplaceTomlValuePreservingFormatting(text, update.section, update.key, update.value) &&
-            !InsertTomlValuePreservingFormatting(text, update.section, update.key, update.value))
+        // 凭证类键统一在这里封装：所有写入都经过这条路径，调用方传的一律是用户输入的明文，
+        // 落盘的永远是 DPAPI 密文。DPAPI 不可用时 SealSecret 返回空串——那种情况下拒绝本次
+        // 写入，而不是退回明文。清空 token 传的是空的字符串字面量 ""，封装后仍是空串，照常保存。
+        std::string value = update.value;
+        // 只封装字符串字面量：凭证键将来若变成布尔或数值（或调用方误传一个裸量），替换进去的
+        // 密文会带引号，把原本的 TOML 类型改掉。形状不对就不动它，宁可漏封也不改类型。
+        if (IsSensitiveConfigKey(update.section, update.key) && value.size() >= 2 && value.front() == '"' &&
+            value.back() == '"')
+        {
+            // 设置页收到的是哨兵而不是明文，原样保存时会把哨兵回传——那不是用户输入的新凭证，
+            // 跳过这次更新，磁盘上已有的密文保持不变。
+            const std::string submitted = UnquoteTomlScalar(value);
+            if (submitted == kSealedCredentialSentinel)
+            {
+                continue;
+            }
+            value = SealSecret(submitted);
+            // 空结果只有在输入本身非空时才算失败：清空凭证传的是空明文，封装后本来就是空串，
+            // 那不是 DPAPI 故障，不能因此把整批设置写回一起丢掉。
+            if (value.empty() && !submitted.empty())
+            {
+                return false;
+            }
+            value = EscapeTomlBasicString(value);
+        }
+        const bool replaced = ReplaceTomlValuePreservingFormatting(text, update.section, update.key, value);
+        const bool applied = replaced || InsertTomlValuePreservingFormatting(text, update.section, update.key, value);
+        if (!applied)
         {
             return false;
         }

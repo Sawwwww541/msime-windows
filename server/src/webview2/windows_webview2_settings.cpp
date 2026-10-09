@@ -4,6 +4,7 @@
 #include "engine/contracts/webview/validator.h"
 #include "engine/core/data_path.h"
 #include "config/ime_config.h"
+#include "config/ime_config_secrets.h"
 #include "defines/defines.h"
 #include "defines/globals.h"
 #include "global/globals.h"
@@ -1619,8 +1620,9 @@ void PostSettingsConfig()
     }
 
     const FloatingToolbarItemsConfig &toolbar = GetConfiguredFloatingToolbarItems();
-    const TencentTmtConfig &tencent_tmt = GetConfiguredTencentTmt();
-    const CustomTranslationConfig &custom_translation = GetConfiguredCustomTranslation();
+    // 凭证取副本：下发给页面之前换成哨兵，页面拿不到明文，用户已配的事实仍在。
+    const TencentTmtConfig tencent_tmt = GetConfiguredTencentTmt();
+    const CustomTranslationConfig custom_translation = GetConfiguredCustomTranslation();
     const NetworkProxyConfig network_proxy = GetConfiguredNetworkProxy();
     nlohmann::json payload = {
         {"type", "configSnapshot"},
@@ -1719,14 +1721,14 @@ void PostSettingsConfig()
             {"switch_language_ctrl_alt_space", GetConfiguredSwitchLanguageCtrlAltSpaceEnabled()},
             {"toggle_character_set_ctrl_shift_f", GetConfiguredCharacterSetShortcutEnabled()}}},
           {"tencent_tmt",
-           {{"secret_id", tencent_tmt.secret_id},
-            {"secret_key", tencent_tmt.secret_key},
+           {{"secret_id", ime_config_detail::MaskSealedCredential(tencent_tmt.secret_id)},
+            {"secret_key", ime_config_detail::MaskSealedCredential(tencent_tmt.secret_key)},
             {"region", tencent_tmt.region},
             {"target_language", tencent_tmt.target_language}}},
           {"custom_translation",
            {{"enabled", custom_translation.enabled},
             {"endpoint", custom_translation.endpoint},
-            {"api_key", custom_translation.api_key}}},
+            {"api_key", ime_config_detail::MaskSealedCredential(custom_translation.api_key)}}},
           {"network", {{"proxy_mode", network_proxy.mode}, {"proxy_server", network_proxy.server}}},
           {"utility",
            {{"unicode_mode", GetConfiguredUnicodeModeEnabled()},

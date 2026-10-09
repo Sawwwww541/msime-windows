@@ -71,6 +71,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_terminal_deactivation_policy.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_user_dictionary_journal.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_config_template_merge.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/test_config_secrets.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_config_non_ascii_path.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_collocation_model.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/test_network_proxy.cpp"
@@ -103,6 +104,7 @@ set(TEST_SOURCE_FILES
     "${CMAKE_SOURCE_DIR}/src/config/ime_config_general.cpp"
     "${CMAKE_SOURCE_DIR}/src/config/ime_config_input.cpp"
     "${CMAKE_SOURCE_DIR}/src/config/ime_config_keys.cpp"
+    "${CMAKE_SOURCE_DIR}/src/config/ime_config_secrets.cpp"
     "${CMAKE_SOURCE_DIR}/src/config/ime_config_services.cpp"
     "${CMAKE_SOURCE_DIR}/src/config/ime_config_shuangpin.cpp"
     "${CMAKE_SOURCE_DIR}/src/config/ime_config_template.cpp"
@@ -167,6 +169,8 @@ target_link_libraries(${TEST_EXECUTABLE_NAME}
     shell32
     advapi32
     ole32
+    # ime_config_secrets.cpp 的 CryptProtectData / CryptBinaryToStringA 在 crypt32 里。
+    crypt32
 )
 
 add_test(NAME ${TEST_EXECUTABLE_NAME} COMMAND ${TEST_EXECUTABLE_NAME})

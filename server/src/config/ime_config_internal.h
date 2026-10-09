@@ -16,6 +16,7 @@
 #include <string_view>
 #include <vector>
 #include "config/ime_config.h"
+#include "config/ime_config_secrets.h"
 
 namespace ime_config_detail
 {

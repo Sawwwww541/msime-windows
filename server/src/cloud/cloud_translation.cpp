@@ -1,6 +1,7 @@
 #include "cloud_translation.h"
 
 #include "config/ime_config.h"
+#include "config/ime_config_secrets.h"
 #include "custom_translation.h"
 #include "niutrans_translation.h"
 #include "tencent_tmt.h"
@@ -116,6 +117,8 @@ void RememberNegative(const std::string &identity)
     g_negative[identity] = std::chrono::steady_clock::now() + kNegativeTtl;
 }
 
+// 配置里存的是 DPAPI 密文，只有这里（真正要发请求的那一刻）才解出来。凭证的三个 Resolve* 是所有
+// 云翻译请求的唯一入口，明文因此只活在这个请求作用域里，不会跟着全局配置常驻进程。
 TencentTmt::Credentials ResolveCredentials()
 {
     TencentTmt::Credentials credentials;
@@ -123,8 +126,8 @@ TencentTmt::Credentials ResolveCredentials()
     if (!config.enabled)
         return credentials;
     credentials.region = config.region.empty() ? "ap-guangzhou" : config.region;
-    credentials.secret_id = CloudTranslation::TrimSecret(config.secret_id);
-    credentials.secret_key = CloudTranslation::TrimSecret(config.secret_key);
+    credentials.secret_id = ime_config_detail::UnsealSecret(CloudTranslation::TrimSecret(config.secret_id));
+    credentials.secret_key = ime_config_detail::UnsealSecret(CloudTranslation::TrimSecret(config.secret_key));
     if (!CloudTranslation::IsUsableSecret(credentials.secret_id) ||
         !CloudTranslation::IsUsableSecret(credentials.secret_key))
         return {};
@@ -136,7 +139,8 @@ CustomTranslation::Config ResolveCustomConfig()
     const auto &configured = GetConfiguredCustomTranslation();
     if (!configured.enabled)
         return {};
-    return {CloudTranslation::TrimSecret(configured.endpoint), CloudTranslation::TrimSecret(configured.api_key)};
+    return {CloudTranslation::TrimSecret(configured.endpoint),
+            ime_config_detail::UnsealSecret(CloudTranslation::TrimSecret(configured.api_key))};
 }
 
 NiuTransTranslation::Config ResolveNiuTransConfig()
@@ -144,7 +148,8 @@ NiuTransTranslation::Config ResolveNiuTransConfig()
     const auto &configured = GetConfiguredNiuTrans();
     if (!configured.enabled)
         return {};
-    return {CloudTranslation::TrimSecret(configured.app_id), CloudTranslation::TrimSecret(configured.apikey)};
+    return {ime_config_detail::UnsealSecret(CloudTranslation::TrimSecret(configured.app_id)),
+            ime_config_detail::UnsealSecret(CloudTranslation::TrimSecret(configured.apikey))};
 }
 
 void PersistGloss(const EnglishIme::TranslationQuery &query, const std::string &gloss,

@@ -173,6 +173,8 @@ set(SRC_FILES
     "./src/config/ime_config_input.cpp"
     "./src/config/ime_config_internal.h"
     "./src/config/ime_config_keys.cpp"
+    "./src/config/ime_config_secrets.cpp"
+    "./src/config/ime_config_secrets.h"
     "./src/config/ime_config_services.cpp"
     "./src/config/ime_config_shuangpin.cpp"
     "./src/config/ime_config_template.cpp"
@@ -319,7 +321,8 @@ add_dependencies(${PROJECT_NAME} Dictionaries)
 target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
 target_link_libraries(${PROJECT_NAME} PRIVATE CURL::libcurl)
 target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)
-target_link_libraries(${PROJECT_NAME} PRIVATE d2d1 dwrite dwmapi shell32 shcore ole32 bcrypt)
+# crypt32: ime_config_secrets.cpp 用 CryptProtectData / CryptBinaryToStringA 保护落盘的 API 凭证。
+target_link_libraries(${PROJECT_NAME} PRIVATE d2d1 dwrite dwmapi shell32 shcore ole32 bcrypt crypt32)
 
 # The helper executables below already build at /W4. The server itself -- the process that owns
 # every network call, the WebView2 hosts and the skin loader -- was still at the default /W3.
@@ -465,6 +468,8 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/config/ime_config_input.cpp"
     "./src/config/ime_config_internal.h"
     "./src/config/ime_config_keys.cpp"
+    "./src/config/ime_config_secrets.cpp"
+    "./src/config/ime_config_secrets.h"
     "./src/config/ime_config_services.cpp"
     "./src/config/ime_config_shuangpin.cpp"
     "./src/config/ime_config_template.cpp"
@@ -509,6 +514,7 @@ target_link_libraries(${SETTINGS_EXECUTABLE_NAME} PRIVATE
     CURL::libcurl
     ZLIB::ZLIB
     bcrypt
+    crypt32
     winhttp
     dwmapi
     dcomp
