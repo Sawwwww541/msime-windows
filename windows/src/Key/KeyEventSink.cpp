@@ -24,6 +24,7 @@
 #include <chrono>
 #include "../../../engine/contracts/ipc_negotiation.h"
 #include "KeyEventSinkInternal.h"
+#include "VimMode.h"
 
 using namespace key_event_sink_detail;
 
@@ -71,6 +72,21 @@ bool ResolveKeyCaretAnchor(CMetasequoiaIME *textService, ITfContext *context, Tf
         context->RequestEditSession(clientId, session, TF_ES_SYNC | TF_ES_READ, &sessionResult);
     session->Release();
     return SUCCEEDED(requestResult) && SUCCEEDED(sessionResult) && resolved;
+}
+
+void ApplyVimModeEscape(CCompositionProcessorEngine *engine, ITfThreadMgr *threadMgr, TfClientId clientId, WPARAM key,
+                        LPARAM keyFlags, bool eaten, bool compositionActive, bool deferredKeysPending)
+{
+    const bool winDown = (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0 || (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
+    if (!VimMode::ShouldSwitchToEnglish(static_cast<UINT>(key), eaten, IsAutoRepeat(keyFlags), CaptureIpcModifiers(),
+                                        winDown, compositionActive, deferredKeysPending) ||
+        !engine || !engine->GetIMEMode(threadMgr, clientId) || !FanyUtils::ReadConfiguredVimMode())
+    {
+        return;
+    }
+    // This runs even when TestKeyDown returns FALSE: TSF then omits OnKeyDown.
+    engine->SetIMEMode(threadMgr, clientId, FALSE);
+    engine->SetPunctuationMode(threadMgr, clientId, FALSE);
 }
 
 void ClearReleasedShiftModifierState()
@@ -801,6 +817,13 @@ STDAPI CMetasequoiaIME::OnTestKeyDown(ITfContext *pContext, WPARAM wParam, LPARA
     UINT code = 0;
     *pIsEaten = _IsKeyEaten(pContext, (UINT)wParam, &code, &wch, &KeystrokeState);
 
+    if (wParam == VK_ESCAPE && !_IsKeyboardDisabled())
+    {
+        ApplyVimModeEscape(_pCompositionProcessorEngine, _pThreadMgr, _tfClientId, wParam, lParam, *pIsEaten != FALSE,
+                           _IsCompositionActiveForKeyGuard() || _candidateMode != CANDIDATE_NONE,
+                           _HasDeferredKeyBarrier());
+    }
+
     // Every keydown reaches this sink, including the ones handed back to the
     // application (backspace with no composition), so the smart-punctuation
     // rejection state is tracked here rather than in the eaten-key path.
@@ -862,6 +885,13 @@ STDAPI CMetasequoiaIME::OnKeyDown(ITfContext *pContext, WPARAM wParam, LPARAM lP
     PerfTimer onKeyDownTimer;
     const uint64_t focusGeneration = _deferredKeyFocusGeneration;
     (void)_DispatchKeyDown(pContext, wParam, lParam, pIsEaten, nullptr, nullptr, nullptr, true, focusGeneration);
+    // Some hosts offer the actual callback without a preceding test.
+    if (wParam == VK_ESCAPE && !_IsKeyboardDisabled())
+    {
+        ApplyVimModeEscape(_pCompositionProcessorEngine, _pThreadMgr, _tfClientId, wParam, lParam, *pIsEaten != FALSE,
+                           _IsCompositionActiveForKeyGuard() || _candidateMode != CANDIDATE_NONE,
+                           _HasDeferredKeyBarrier());
+    }
     DebugTsfKeyLatency(L"on-key-down", 0, onKeyDownTimer.ElapsedMs(), S_OK);
     return S_OK;
 }

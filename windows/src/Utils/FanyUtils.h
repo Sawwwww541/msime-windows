@@ -31,4 +31,6 @@ struct SwitchLanguageHotkeys
 };
 // Read keybindings.switch_language_* from shared config.toml.
 SwitchLanguageHotkeys ReadConfiguredSwitchLanguageHotkeys();
+// Whether input.vim_mode_apps in shared config.toml lists this host process; cached, disabled by default.
+bool ReadConfiguredVimMode();
 } // namespace FanyUtils
