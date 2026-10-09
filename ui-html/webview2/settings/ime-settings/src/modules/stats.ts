@@ -35,6 +35,9 @@ const OVERVIEW_MIN_INTERVAL_MS = 1000;
 /** 在途概览查询超过这个时间没回来，就当它丢了，允许再发。 */
 const OVERVIEW_STALE_MS = 15000;
 
+/** 首列补标的起始月份与下一个月份标签之间至少隔这么多列，否则两段文字会挤在一起。 */
+export const CALENDAR_MIN_MONTH_LABEL_GAP_WEEKS = 3;
+
 let statisticsEnabled = false;
 let lastOverview: StatsOverview | null = null;
 let lastOverviewSignature = '';
@@ -46,6 +49,7 @@ let statusTimer: number | null = null;
 let lastOverviewRequestAt = 0;
 let overviewPollTimer: number | null = null;
 const pendingRequests = new Map<string, StatsRequest['action']>();
+let calendarUserScrolled = false;
 
 // ------------------------------------------------------------------ 纯函数（单测覆盖）
 
@@ -173,6 +177,35 @@ export function calendarStart(today: Date, weeks: number): Date {
   return addDays(start, -((start.getDay() + 6) % 7));
 }
 
+/**
+ * 计算日历热力图各周列对应的月份标签文本。
+ * 列内出现某月 1 日时标注该月，保证标签与该月的列对齐；相邻两个 1 日至少隔 4 列，不会重叠。
+ * 首列不含 1 日时补标起始月份，但离第一个月份边界不足 minGapWeeks 列就留空，
+ * 不能为了只占一两列的残月挤掉真正的月份标签。
+ */
+export function computeCalendarMonthLabels(
+  weekStarts: Date[],
+  minGapWeeks: number = CALENDAR_MIN_MONTH_LABEL_GAP_WEEKS
+): string[] {
+  const labels = weekStarts.map((weekStart) => {
+    for (let i = 0; i < 7; i++) {
+      const date = addDays(weekStart, i);
+      if (date.getDate() === 1) {
+        return `${date.getMonth() + 1}月`;
+      }
+    }
+    return '';
+  });
+  if (labels.length > 0 && !labels[0]) {
+    const firstBoundary = labels.findIndex((label) => label !== '');
+    const room = firstBoundary === -1 ? labels.length : firstBoundary;
+    if (room >= minGapWeeks) {
+      labels[0] = `${weekStarts[0].getMonth() + 1}月`;
+    }
+  }
+  return labels;
+}
+
 /** 明细列表：取最近 days 天并按日期倒序（新的在上）。 */
 export function detailRows(daily: StatsDailyRow[], days: number): StatsDailyRow[] {
   return daily.slice(-days).reverse();
@@ -241,7 +274,7 @@ function renderOverview(overview: StatsOverview): void {
   if (!hasData) {
     return;
   }
-  // 重建热力图会把滚动位置打回 0，列数没变时原样放回去。
+  // 重建热力图会把滚动位置打回 0：用户在往回看历史时原样放回，否则贴齐最右侧（今天）。
   const calendarBox = byId('statsCalendar');
   const calendarScroll = calendarBox?.scrollLeft ?? 0;
   renderCards(overview);
@@ -251,8 +284,17 @@ function renderOverview(overview: StatsOverview): void {
   renderCategories(overview);
   renderDetails(overview);
   if (calendarBox) {
-    calendarBox.scrollLeft = calendarScroll;
+    if (calendarUserScrolled) {
+      calendarBox.scrollLeft = calendarScroll;
+    } else {
+      pinCalendarToToday(calendarBox);
+    }
   }
+}
+
+/** scrollLeft 超出上限时浏览器自动钳到最右侧，没有横向滚动时等于 0。 */
+function pinCalendarToToday(box: HTMLElement): void {
+  box.scrollLeft = box.scrollWidth - box.clientWidth;
 }
 
 function statCard(title: string, value: string, unit: string, note: string): HTMLElement {
@@ -320,21 +362,11 @@ function renderCalendar(overview: StatsOverview): void {
 
   // 固定窗口：不按首条记录收缩，区间外没有数据时格子自然显示为空。
   const today = dayKeyToDate(overview.todayDayKey);
-  const monthFragment = document.createDocumentFragment();
   const gridFragment = document.createDocumentFragment();
+  const weekStarts: Date[] = [];
   let weekStart = calendarStart(today, calendarWeeks);
   while (weekStart.getTime() <= today.getTime()) {
-    // 只在列内出现某月 1 日时标注月份，保证标签与该月的列对齐。
-    const label = el('span', 'stats-month-label');
-    for (let i = 0; i < 7; i++) {
-      const date = addDays(weekStart, i);
-      if (date.getDate() === 1) {
-        label.textContent = `${date.getMonth() + 1}月`;
-        break;
-      }
-    }
-    monthFragment.append(label);
-
+    weekStarts.push(weekStart);
     for (let i = 0; i < 7; i++) {
       const date = addDays(weekStart, i);
       const dayKey = dateToDayKey(date);
@@ -348,6 +380,16 @@ function renderCalendar(overview: StatsOverview): void {
       gridFragment.append(cell);
     }
     weekStart = addDays(weekStart, 7);
+  }
+
+  const monthLabels = computeCalendarMonthLabels(weekStarts);
+  const monthFragment = document.createDocumentFragment();
+  for (const labelText of monthLabels) {
+    const label = el('span', 'stats-month-label');
+    if (labelText) {
+      label.textContent = labelText;
+    }
+    monthFragment.append(label);
   }
 
   months.replaceChildren(monthFragment);
@@ -543,6 +585,11 @@ function setupCalendarResize(): void {
     // 按 weeks + 1 计算格子尺寸才能保证热图不出现横向滚动条。
     const nextCell = computeCalendarCellSize(width, nextWeeks + 1);
     if (nextWeeks === calendarWeeks && nextCell === calendarCellPx) {
+      // 列数和格子都到了下限，再变窄只是可视宽度变了，不会重绘；这里也得贴右，
+      // 否则浏览器保持 scrollLeft 不动，今天会被挤出右侧。
+      if (!calendarUserScrolled) {
+        pinCalendarToToday(box);
+      }
       return;
     }
     const previousWeeks = calendarWeeks;
@@ -552,11 +599,23 @@ function setupCalendarResize(): void {
     if (!lastOverview) {
       return;
     }
-    // 新列在左侧追加，按宽度差平移滚动位置，保持用户正在看的日期不跳。
     const previousScroll = box.scrollLeft;
     renderCalendar(lastOverview);
-    box.scrollLeft = Math.max(0, previousScroll + (nextWeeks - previousWeeks) * CALENDAR_COLUMN_PX);
+    if (calendarUserScrolled) {
+      // 新列在左侧追加，按宽度差平移滚动位置，保持用户正在看的日期不跳。
+      box.scrollLeft = Math.max(0, previousScroll + (nextWeeks - previousWeeks) * CALENDAR_COLUMN_PX);
+    } else {
+      pinCalendarToToday(box);
+    }
   };
+  // 离开最右侧就算在往回看历史；滚回最右侧或窗口放宽到不再需要滚动时恢复贴右。
+  box.addEventListener(
+    'scroll',
+    () => {
+      calendarUserScrolled = box.scrollWidth - box.clientWidth - box.scrollLeft > 4;
+    },
+    { passive: true }
+  );
   calendarObserver?.disconnect();
   calendarObserver = new ResizeObserver(applyMetrics);
   calendarObserver.observe(box);

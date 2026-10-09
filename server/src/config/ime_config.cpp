@@ -43,6 +43,9 @@ namespace ime_config_detail
 {
 SchemeType g_input_scheme = SchemeType::Shuangpin;
 std::string g_input_mode = "chinese";
+std::atomic<bool> g_configured_input_mode_japanese{false};
+std::atomic<ActiveInputMode> g_active_input_mode{ActiveInputMode::Configured};
+std::atomic<bool> g_trilingual_cycle_enabled{false};
 std::string g_japanese_schema = "romaji";
 std::string g_character_set = "simplified";
 std::string g_default_ime_mode = "chinese";
@@ -274,14 +277,26 @@ bool IsValidSettingsWindowLinger(const std::string &linger)
     return linger == "off" || linger == "1m" || linger == "5m" || linger == "10m" || linger == "30m" ||
            linger == "60m" || linger == "forever";
 }
+
+bool IsValidTranslationTargetLanguage(const std::string &language)
+{
+    static constexpr std::string_view kLanguages[] = {"en", "fr", "ja", "es", "ru", "de", "ko", "th", "vi", "it"};
+    return std::find(std::begin(kLanguages), std::end(kLanguages), language) != std::end(kLanguages);
+}
 } // namespace ime_config_detail
 
 namespace
 {
 const std::vector<std::string_view> &AiAssistantProviders()
 {
-    static const std::vector<std::string_view> providers{"deepseek", "openai", "siliconflow", "groq"};
+    static const std::vector<std::string_view> providers{"deepseek", "openai", "siliconflow", "groq", "custom"};
     return providers;
+}
+
+// 服务商已下线的旧默认模型。用户配置里残留这些值时按空槽位处理，跟随当前默认值。
+bool IsRetiredAiAssistantDefaultModel(std::string_view provider, std::string_view model)
+{
+    return provider == "groq" && model == "llama-3.3-70b-versatile";
 }
 } // namespace
 
@@ -419,7 +434,16 @@ bool LoadImeConfig()
         g_input_scheme = ParseScheme(tbl["input"]["schema"].value_or(std::string("shuangpin")));
         {
             const std::string mode = tbl["input"]["mode"].value_or(std::string("chinese"));
-            g_input_mode = mode == "japanese" ? "japanese" : "chinese";
+            const std::string configured_mode = mode == "japanese" ? "japanese" : "chinese";
+            const bool trilingual_cycle = tbl["keybindings"]["trilingual_cycle"].value_or(false);
+            // An unrelated settings reload must not undo a runtime language cycle.
+            // Explicit language/cycle preference changes start from the saved mode.
+            if (!trilingual_cycle || trilingual_cycle != g_trilingual_cycle_enabled.load(std::memory_order_relaxed) ||
+                configured_mode != g_input_mode)
+                g_active_input_mode.store(ActiveInputMode::Configured, std::memory_order_relaxed);
+            g_input_mode = configured_mode;
+            g_configured_input_mode_japanese.store(configured_mode == "japanese", std::memory_order_relaxed);
+            g_trilingual_cycle_enabled.store(trilingual_cycle, std::memory_order_relaxed);
         }
         {
             const std::string schema = tbl["input"]["japanese_schema"].value_or(std::string("romaji"));
@@ -835,11 +859,14 @@ bool LoadImeConfig()
         {
             const std::string id(provider);
             const auto load_slot = [&](const std::string &key, const std::string &legacy, std::string &target) {
+                // 空值和服务商已下线的旧默认模型都表示「用默认值」：早于 #610 的版本会把默认值原样写盘。
+                const auto usable = [&](const std::string &value) {
+                    return !value.empty() && !(key == "model" && IsRetiredAiAssistantDefaultModel(id, value));
+                };
                 const std::string stored = tbl["ai_assistant"][key + "_" + id].value_or(std::string());
-                // 空的旧版 endpoint/model 和空槽位一样表示「用默认值」。
-                if (!stored.empty())
+                if (usable(stored))
                     target = stored;
-                else if (id == g_ai_assistant.provider && !legacy.empty())
+                else if (id == g_ai_assistant.provider && usable(legacy))
                     target = legacy;
             };
             load_slot("endpoint", g_ai_assistant.endpoint, g_ai_assistant.endpoints[id]);
@@ -869,10 +896,7 @@ bool LoadImeConfig()
         if (g_tencent_tmt.region.empty())
             g_tencent_tmt.region = "ap-guangzhou";
         g_tencent_tmt.target_language = tbl["tencent_tmt"]["target_language"].value_or(std::string("en"));
-        if (g_tencent_tmt.target_language != "en" && g_tencent_tmt.target_language != "fr" &&
-            g_tencent_tmt.target_language != "ja" && g_tencent_tmt.target_language != "es" &&
-            g_tencent_tmt.target_language != "ru" && g_tencent_tmt.target_language != "de" &&
-            g_tencent_tmt.target_language != "ko")
+        if (!IsValidTranslationTargetLanguage(g_tencent_tmt.target_language))
             g_tencent_tmt.target_language = "en";
         g_custom_translation.enabled = tbl["custom_translation"]["enabled"].value_or(false);
         g_custom_translation.endpoint = tbl["custom_translation"]["endpoint"].value_or(std::string());
@@ -998,6 +1022,7 @@ void InvalidateImeConfigWriteTime()
 
 void InitImeConfig()
 {
+    g_active_input_mode.store(ActiveInputMode::Configured, std::memory_order_relaxed);
     // Build the path from the wide accessor: std::filesystem::path(std::string) decodes with the
     // system ANSI code page, which corrupts a non-ASCII (e.g. Chinese) user profile path on a
     // non-UTF-8 ACP machine and makes every config read/write fail ("设置保存失败").

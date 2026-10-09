@@ -24,6 +24,7 @@
 #include <chrono>
 #include "../../../engine/contracts/ipc_negotiation.h"
 #include "KeyEventSinkInternal.h"
+#include "VimMode.h"
 
 using namespace key_event_sink_detail;
 
@@ -71,6 +72,21 @@ bool ResolveKeyCaretAnchor(CMetasequoiaIME *textService, ITfContext *context, Tf
         context->RequestEditSession(clientId, session, TF_ES_SYNC | TF_ES_READ, &sessionResult);
     session->Release();
     return SUCCEEDED(requestResult) && SUCCEEDED(sessionResult) && resolved;
+}
+
+void ApplyVimModeEscape(CCompositionProcessorEngine *engine, ITfThreadMgr *threadMgr, TfClientId clientId, WPARAM key,
+                        LPARAM keyFlags, bool eaten, bool compositionActive, bool deferredKeysPending)
+{
+    const bool winDown = (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0 || (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
+    if (!VimMode::ShouldSwitchToEnglish(static_cast<UINT>(key), eaten, IsAutoRepeat(keyFlags), CaptureIpcModifiers(),
+                                        winDown, compositionActive, deferredKeysPending) ||
+        !engine || !engine->GetIMEMode(threadMgr, clientId) || !FanyUtils::ReadConfiguredVimMode())
+    {
+        return;
+    }
+    // This runs even when TestKeyDown returns FALSE: TSF then omits OnKeyDown.
+    engine->SetIMEMode(threadMgr, clientId, FALSE);
+    engine->SetPunctuationMode(threadMgr, clientId, FALSE);
 }
 
 void ClearReleasedShiftModifierState()
@@ -152,6 +168,13 @@ bool IsCharacterSetInputModeToggle(UINT code, UINT modifiers)
     return FanyImeProtocol::IsCharacterSetShortcut(code, modifiers) && (GetAsyncKeyState(VK_LWIN) & 0x8000) == 0 &&
            (GetAsyncKeyState(VK_RWIN) & 0x8000) == 0 && SupportsCharacterSetShortcut() &&
            FanyUtils::ReadConfiguredSwitchLanguageHotkeys().character_set_ctrl_shift_f;
+}
+
+bool IsTrilingualCycleEnabled()
+{
+    return Global::TrilingualCycleEnabled.load(std::memory_order_relaxed) &&
+           (GetAsyncKeyState(VK_LWIN) & 0x8000) == 0 && (GetAsyncKeyState(VK_RWIN) & 0x8000) == 0 &&
+           SupportsTrilingualCycle();
 }
 
 void PostOwnerMessageWithSyncFallback(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -794,6 +817,13 @@ STDAPI CMetasequoiaIME::OnTestKeyDown(ITfContext *pContext, WPARAM wParam, LPARA
     UINT code = 0;
     *pIsEaten = _IsKeyEaten(pContext, (UINT)wParam, &code, &wch, &KeystrokeState);
 
+    if (wParam == VK_ESCAPE && !_IsKeyboardDisabled())
+    {
+        ApplyVimModeEscape(_pCompositionProcessorEngine, _pThreadMgr, _tfClientId, wParam, lParam, *pIsEaten != FALSE,
+                           _IsCompositionActiveForKeyGuard() || _candidateMode != CANDIDATE_NONE,
+                           _HasDeferredKeyBarrier());
+    }
+
     // Every keydown reaches this sink, including the ones handed back to the
     // application (backspace with no composition), so the smart-punctuation
     // rejection state is tracked here rather than in the eaten-key path.
@@ -855,6 +885,13 @@ STDAPI CMetasequoiaIME::OnKeyDown(ITfContext *pContext, WPARAM wParam, LPARAM lP
     PerfTimer onKeyDownTimer;
     const uint64_t focusGeneration = _deferredKeyFocusGeneration;
     (void)_DispatchKeyDown(pContext, wParam, lParam, pIsEaten, nullptr, nullptr, nullptr, true, focusGeneration);
+    // Some hosts offer the actual callback without a preceding test.
+    if (wParam == VK_ESCAPE && !_IsKeyboardDisabled())
+    {
+        ApplyVimModeEscape(_pCompositionProcessorEngine, _pThreadMgr, _tfClientId, wParam, lParam, *pIsEaten != FALSE,
+                           _IsCompositionActiveForKeyGuard() || _candidateMode != CANDIDATE_NONE,
+                           _HasDeferredKeyBarrier());
+    }
     DebugTsfKeyLatency(L"on-key-down", 0, onKeyDownTimer.ElapsedMs(), S_OK);
     return S_OK;
 }
@@ -1146,10 +1183,28 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
             // TestKeyDown owned this key. Do not send it as ordinary input.
             return KeyDownDispatchResult::Complete;
         }
+        if (KeystrokeState.Function == FUNCTION_CYCLE_INPUT_MODE && !SupportsTrilingualCycle())
+        {
+            // A reconnect may replace the peer after the language hotkey was queued.
+            // Keep it eaten, but never send a cycle to an unnegotiated Server.
+            // Later keys were projected into its destination, so discard that
+            // queue along with the now-unusable projection.
+            _ResetSessionAfterFailure(DeferredKeyFailureKind::Resync);
+            return KeyDownDispatchResult::Complete;
+        }
 
         Global::Keycode = code;
         Global::wch = wch;
         Global::ModifiersDown = capturedModifiers;
+        if (KeystrokeState.Function == FUNCTION_CYCLE_INPUT_MODE)
+        {
+            // Mark the request explicitly and carry this host's own state: the
+            // Server cycles from it, not from whichever host it last heard from.
+            // Every key before this one has been applied, so it is current.
+            Global::ModifiersDown |= FanyImeTrilingualInput::EncodeCycleRequest(
+                _pCompositionProcessorEngine->GetIMEMode(_pThreadMgr, _tfClientId) != FALSE,
+                Global::JapaneseInputModeEnabled.load(std::memory_order_relaxed));
+        }
 
         // The character-set shortcut carries the caret anchor for its badge.
         // An unresolved anchor is sent explicitly as {0, INVALID_Y}; the packet
@@ -1197,6 +1252,13 @@ CMetasequoiaIME::KeyDownDispatchResult CMetasequoiaIME::_DispatchKeyDown(
         if (KeystrokeState.Function == FUNCTION_SERVER_CANDIDATE_KEY && _msgWndHandle)
         {
             _PostAsyncKeyRequest(WM_AsyncServerCandidateKey, code, wch, requestId, {}, 0, 0, deferredReplayToken);
+            return deferredReplayToken != 0 ? KeyDownDispatchResult::AwaitingCompletion
+                                            : KeyDownDispatchResult::Complete;
+        }
+
+        if (KeystrokeState.Function == FUNCTION_CYCLE_INPUT_MODE && _msgWndHandle)
+        {
+            _PostAsyncKeyRequest(WM_AsyncCycleInputMode, code, wch, requestId, {}, 0, 0, deferredReplayToken);
             return deferredReplayToken != 0 ? KeyDownDispatchResult::AwaitingCompletion
                                             : KeyDownDispatchResult::Complete;
         }

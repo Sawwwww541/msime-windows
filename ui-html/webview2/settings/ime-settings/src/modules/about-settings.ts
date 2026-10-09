@@ -2,10 +2,12 @@ import { serializeHostMessage } from '../../../../shared/messages';
 import { updateConfig } from './config-sync';
 import { setupToggleButton } from './shared';
 import type { UpdateManifest, ValidatedUpdate } from './update-manifest';
-import { compareVersions, describeInstallerTrust, parseVersion, validateManifest } from './update-manifest';
+import { compareVersions, describeInstallerTrust, mirrorDownloadUrl, parseVersion, validateManifest } from './update-manifest';
 
 const UPDATE_MANIFEST_URL = 'https://msime.app/update.json';
 const RELEASES_PAGE_URL = 'https://github.com/metasequoiaime/MSIME-Windows/releases';
+// msime.app's download mirror (Aliyun OSS, Hong Kong). GitHub release downloads from mainland China often run at tens of KB/s.
+const DOWNLOAD_MIRROR_PREFIX = 'https://dl.msime.app/gh/';
 const LICENSE_URL = 'https://github.com/metasequoiaime/MSIME-Windows/blob/main/LICENSE';
 const PRIVACY_URL = 'https://github.com/metasequoiaime/MSIME-Windows/blob/main/PRIVACY.md';
 const REQUEST_TIMEOUT_MS = 10000;
@@ -94,6 +96,7 @@ export function setupAboutSettings(): void {
   const dialogTrust = document.getElementById('about-update-dialog-trust');
   const cancelButton = document.getElementById('about-update-cancel');
   const downloadButton = document.getElementById('about-update-download');
+  const mirrorButton = document.getElementById('about-update-mirror');
 
   if (!(checkButton instanceof HTMLButtonElement) ||
       !(versionLabel instanceof HTMLElement) ||
@@ -102,12 +105,14 @@ export function setupAboutSettings(): void {
       !(dialogVersion instanceof HTMLElement) ||
       !(dialogTrust instanceof HTMLElement) ||
       !(cancelButton instanceof HTMLButtonElement) ||
-      !(downloadButton instanceof HTMLButtonElement)) {
+      !(downloadButton instanceof HTMLButtonElement) ||
+      !(mirrorButton instanceof HTMLButtonElement)) {
     console.warn('[about] update controls not found');
     return;
   }
 
   let releaseUrl = RELEASES_PAGE_URL;
+  let mirrorUrl: string | null = null;
 
   const setStatus = (message: string, kind: 'idle' | 'success' | 'error' = 'idle') => {
     statusLabel.textContent = message;
@@ -118,6 +123,13 @@ export function setupAboutSettings(): void {
   downloadButton.addEventListener('click', () => {
     setDialogOpen(dialog, false);
     postExternalUrl(releaseUrl);
+  });
+  mirrorButton.addEventListener('click', () => {
+    if (!mirrorUrl) {
+      return;
+    }
+    setDialogOpen(dialog, false);
+    postExternalUrl(mirrorUrl);
   });
   dialog.addEventListener('click', (event) => {
     if (event.target === dialog) {
@@ -157,6 +169,8 @@ export function setupAboutSettings(): void {
       const latest = update.version;
       if (compareVersions(latest, currentVersion) > 0) {
         releaseUrl = update.releaseUrl;
+        mirrorUrl = mirrorDownloadUrl(update, DOWNLOAD_MIRROR_PREFIX);
+        mirrorButton.hidden = mirrorUrl === null;
         dialogVersion.textContent = `v${latest.display}`;
         renderInstallerTrust(dialogTrust, update);
         setStatus(`发现新版本 v${latest.display}`, 'success');

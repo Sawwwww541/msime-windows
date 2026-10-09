@@ -1076,6 +1076,20 @@ static void ApplyKeybindingsSubkey(const std::string &path, const json::object &
             PostSettingsConfig();
         }
     }
+    if (path == "keybindings.trilingual_cycle")
+    {
+        const bool value = json::value_to<bool>(data.at("value"));
+        const SchemeType previous_scheme = GetConfiguredActiveInputScheme();
+        if (SetConfiguredTrilingualCycleEnabled(value))
+        {
+            // Turning the cycle off drops a runtime Japanese/Chinese override,
+            // which can change the active scheme.
+            if (previous_scheme != GetConfiguredActiveInputScheme())
+                ApplyConfiguredInputScheme();
+            BroadcastTrilingualCycleState();
+            PostSettingsConfig();
+        }
+    }
 }
 
 // [helpcode] 段：辅助码方案与开关
@@ -1719,7 +1733,8 @@ void PostSettingsConfig()
            {{"switch_language_shift", GetConfiguredSwitchLanguageShiftEnabled()},
             {"switch_language_ctrl", GetConfiguredSwitchLanguageCtrlEnabled()},
             {"switch_language_ctrl_alt_space", GetConfiguredSwitchLanguageCtrlAltSpaceEnabled()},
-            {"toggle_character_set_ctrl_shift_f", GetConfiguredCharacterSetShortcutEnabled()}}},
+            {"toggle_character_set_ctrl_shift_f", GetConfiguredCharacterSetShortcutEnabled()},
+            {"trilingual_cycle", GetConfiguredTrilingualCycleEnabled()}}},
           {"tencent_tmt",
            {{"secret_id", ime_config_detail::MaskSealedCredential(tencent_tmt.secret_id)},
             {"secret_key", ime_config_detail::MaskSealedCredential(tencent_tmt.secret_key)},

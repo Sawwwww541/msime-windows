@@ -24,6 +24,20 @@ export type ValidatedUpdate = {
   signed: boolean | null;
 };
 
+const RELEASE_TAG_URL = /^https:\/\/github\.com\/metasequoiaime\/([\w.-]+)\/releases\/tag\/([\w.+-]+)$/;
+
+// The mirror serves GitHub release assets under `<prefix><original download URL>`. The installer name has
+// already been held to the release pipeline's shape, and it is the file whose SHA256 the dialog shows, so
+// the digest applies to the mirrored copy unchanged. Without a tag URL or an installer name there is
+// nothing to point at, and the dialog offers GitHub only.
+export function mirrorDownloadUrl(update: ValidatedUpdate, prefix: string): string | null {
+  const tag = RELEASE_TAG_URL.exec(update.releaseUrl);
+  if (!tag || !update.installerName) {
+    return null;
+  }
+  return `${prefix}https://github.com/metasequoiaime/${tag[1]}/releases/download/${tag[2]}/${update.installerName}`;
+}
+
 export function parseVersion(value: string): Version | null {
   const match = value.trim().match(/^v?(\d+(?:\.\d+)*)(?:[-+].*)?$/i);
   if (!match) {

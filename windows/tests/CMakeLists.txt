@@ -10,6 +10,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     endif()
 endif()
 
+add_executable(test_vim_mode vim_mode.cpp ../src/Key/VimMode.cpp)
+target_include_directories(test_vim_mode PRIVATE ../src)
+target_compile_features(test_vim_mode PRIVATE cxx_std_17)
+add_test(NAME vim_mode COMMAND test_vim_mode)
+
 add_executable(test_client_fallback client_fallback.cpp)
 target_include_directories(test_client_fallback PRIVATE ../src)
 target_compile_features(test_client_fallback PRIVATE cxx_std_17)

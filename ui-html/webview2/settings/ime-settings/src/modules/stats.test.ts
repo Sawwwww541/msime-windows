@@ -4,6 +4,7 @@ import {
   calendarLevel,
   calendarStart,
   computeCalendarCellSize,
+  computeCalendarMonthLabels,
   computeCalendarWeeks,
   dateToDayKey,
   dayKeyToDate,
@@ -176,6 +177,41 @@ describe('热力图窗口', () => {
       expect(columns).toBeGreaterThanOrEqual(53);
       expect(columns).toBeLessThanOrEqual(54);
     }
+  });
+
+  const weeksFrom = (monday: Date, count: number) => Array.from({ length: count }, (_, i) => addDays(monday, i * 7));
+
+  it('首列含 1 日时标注那个月，而不是周一所在的上个月', () => {
+    // 2025-09-29（周一）这一列含 10 月 1 日，下一个边界是 10-27 那列的 11 月 1 日。
+    const labels = computeCalendarMonthLabels(weeksFrom(new Date(2025, 8, 29), 6));
+    expect(labels).toEqual(['10月', '', '', '', '11月', '']);
+  });
+
+  it('首列不含 1 日且离第一个边界足够远时补标起始月份', () => {
+    // 2025-01-06 起：2 月 1 日落在第 3 列（01-27 那周）。
+    const labels = computeCalendarMonthLabels(weeksFrom(new Date(2025, 0, 6), 5));
+    expect(labels).toEqual(['1月', '', '', '2月', '']);
+  });
+
+  it('首列离第一个边界太近时留空，不挤掉真正的月份标签', () => {
+    // 2025-01-20 起：2 月 1 日落在第 1 列。
+    const labels = computeCalendarMonthLabels(weeksFrom(new Date(2025, 0, 20), 5));
+    expect(labels).toEqual(['', '2月', '', '', '']);
+  });
+
+  it('整段都不含 1 日时首列仍标注起始月份', () => {
+    const labels = computeCalendarMonthLabels(weeksFrom(new Date(2025, 0, 6), 3));
+    expect(labels).toEqual(['1月', '', '']);
+  });
+
+  it('真实窗口里每个月份边界都有标签', () => {
+    const today = new Date(2026, 9, 8);
+    const weekStarts: Date[] = [];
+    for (let start = calendarStart(today, 53); start.getTime() <= today.getTime(); start = addDays(start, 7)) {
+      weekStarts.push(start);
+    }
+    const labels = computeCalendarMonthLabels(weekStarts).filter((label) => label !== '');
+    expect(labels).toEqual(['10月', '11月', '12月', '1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月']);
   });
 });
 

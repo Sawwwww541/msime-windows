@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compareVersions, describeInstallerTrust, parseVersion, validateManifest } from './update-manifest';
+import { compareVersions, describeInstallerTrust, mirrorDownloadUrl, parseVersion, validateManifest } from './update-manifest';
 
 const RELEASES = 'https://github.com/metasequoiaime/MSIME-Windows/releases';
 const DIGEST = 'a'.repeat(64);
@@ -96,5 +96,23 @@ describe('describeInstallerTrust', () => {
     const trust = describeInstallerTrust(validateManifest({ version: '1.0.0', releaseUrl: RELEASES }, RELEASES)!);
     expect(trust.warning).toBeNull();
     expect(trust.verify).toBeNull();
+  });
+});
+
+describe('mirrorDownloadUrl', () => {
+  const MIRROR = 'https://dl.msime.app/gh/';
+
+  it('points at the installer the dialog describes, under its GitHub download URL', () => {
+    const update = validateManifest(manifest(), RELEASES);
+    expect(update && mirrorDownloadUrl(update, MIRROR)).toBe(
+      'https://dl.msime.app/gh/https://github.com/metasequoiaime/MSIME-Windows/releases/download/v0.3.1/MetasequoiaIME_Setup_v0.3.1-unsigned.exe'
+    );
+  });
+
+  it('offers nothing without an installer name or a tag URL', () => {
+    const noInstaller = validateManifest(manifest({ installerName: undefined }), RELEASES);
+    expect(noInstaller && mirrorDownloadUrl(noInstaller, MIRROR)).toBeNull();
+    const pageOnly = validateManifest(manifest({ releaseUrl: RELEASES }), RELEASES);
+    expect(pageOnly && mirrorDownloadUrl(pageOnly, MIRROR)).toBeNull();
   });
 });

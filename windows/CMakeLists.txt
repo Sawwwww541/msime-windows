@@ -148,6 +148,8 @@ add_library(${PROJECT_NAME} SHARED
     # Key
     "./src/Key/DeferredKeyFailurePolicy.h"
     "./src/Key/KeyEventSink.cpp"
+    "./src/Key/VimMode.cpp"
+    "./src/Key/VimMode.h"
     "./src/Key/KeyEventSink_DeferredKeys.cpp"
     "./src/Key/KeyEventSink_Hotkeys.cpp"
     "./src/Key/KeyEventSinkInternal.h"
