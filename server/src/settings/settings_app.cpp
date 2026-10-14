@@ -14,6 +14,7 @@
 #include "settings/serial_task_queue.h"
 #include "statistics/stats_overview.h"
 #include "statistics/stats_store.h"
+#include "update/update_manager.h"
 #include <chrono>
 #include <future>
 #include <memory>
@@ -22,6 +23,7 @@
 #include "skin/candidate_skin_catalog.h"
 #include "utils/common_utils.h"
 #include "utils/single_instance.h"
+#include "utils/upgrade_guard.h"
 #include "voice-input/voice_providers.h"
 
 #include <WebView2.h>
@@ -63,6 +65,8 @@ constexpr UINT kOpenAboutSection = WM_APP + 2;
 constexpr UINT kScanSkinCatalog = WM_APP + 3;
 constexpr UINT kWorkerCompleted = WM_APP + 4;
 constexpr UINT kQuitSettings = WM_APP + 5;
+// 自动更新的进度窗：把设置页切到「关于」并进入自动更新模式（下载/校验/安装进度）。
+constexpr UINT kShowUpdateProgress = WM_APP + 6;
 constexpr UINT_PTR kConfigReloadTimer = 1;
 constexpr UINT_PTR kLingerTimer = 2;
 
@@ -80,6 +84,7 @@ bool g_maximize_button_hover = false;
 bool g_window_active = true;
 bool g_window_minimized = false;
 bool g_open_about_on_ready = false;
+bool g_show_update_progress_on_ready = false;
 bool g_webview_content_started = false;
 HWND g_settings_hwnd = nullptr;
 std::optional<CandidateSkinCatalog::ScanResult> g_candidate_skin_catalog;
@@ -251,6 +256,45 @@ void ShowAboutSection()
             if (selectAbout()) clearInterval(retry);
         }, 50);
         setTimeout(() => clearInterval(retry), 10000);
+    })())JS",
+                             nullptr);
+}
+
+// 自动更新的进度窗：切到「关于」并让页面进入自动更新模式。Server 进程负责实际的
+// 下载与安装，页面通过 updateRequest 的 status 轮询拿进度（Server 写状态文件，
+// 设置进程读，见 update/update_manager.cpp 的 GetMergedStatus）。
+void ShowAutoUpdateProgress()
+{
+    if (!g_webview)
+        return;
+    g_webview->ExecuteScript(LR"JS((() => {
+        window.__msimeAutoUpdateProgress = true;
+        const selectAbout = () => {
+            const item = document.querySelector('.sidebar .item[data-target="about-settings"]');
+            if (!item) return false;
+            if (!item.classList.contains('active')) item.click();
+            const section = document.getElementById('about-settings');
+            if (!item.classList.contains('active') || !section || getComputedStyle(section).display === 'none')
+                return false;
+            item.scrollIntoView({ block: 'nearest' });
+            return true;
+        };
+        const kick = () => {
+            if (!selectAbout()) return false;
+            window.dispatchEvent(new CustomEvent('msime:auto-update-progress'));
+            return true;
+        };
+        if (!kick()) {
+            const retry = setInterval(() => {
+                if (kick()) clearInterval(retry);
+            }, 50);
+            setTimeout(() => clearInterval(retry), 10000);
+        }
+        // 关于页模块是延迟加载的，事件可能还没有听众；补几次延迟广播，页面里的
+        // __msimeAutoUpdateProgress 标记在模块装载时兜底。
+        setTimeout(() => window.dispatchEvent(new CustomEvent('msime:auto-update-progress')), 600);
+        setTimeout(() => window.dispatchEvent(new CustomEvent('msime:auto-update-progress')), 1600);
+        setTimeout(() => window.dispatchEvent(new CustomEvent('msime:auto-update-progress')), 3200);
     })())JS",
                              nullptr);
 }
@@ -519,6 +563,7 @@ std::wstring BuildConfigMessage(bool refresh_skin_catalog)
            {{"diagnostic_log", GetConfiguredDiagnosticLogEnabled()},
             {"candidate_window_diagnostic_log", GetConfiguredDiagnosticLogEnabled()},
             {"tsf_diagnostic_log", GetConfiguredTsfDiagnosticLogEnabled()},
+            {"auto_update", GetConfiguredAutoUpdateEnabled()},
             {"floating_toolbar", GetConfiguredFloatingToolbarEnabled()},
             {"caret_state_indicator", GetConfiguredCaretStateIndicatorEnabled()},
             {"caret_state_indicator_on_focus", GetConfiguredCaretStateIndicatorOnFocus()},
@@ -792,6 +837,57 @@ void PostValidatedServerMessage(json::object payload)
     g_webview->PostWebMessageAsJson(message.c_str());
 }
 
+// 从模块工作线程回调里推消息用：WebView2 的 PostWebMessageAsJson 必须在窗口线程调用，
+// 所以经 SerialTaskQueue 转投（提交是线程安全的，队列停止后 Submit 直接失败）。
+void PostServerMessageAsync(json::object payload)
+{
+    if (!g_webview || !g_worker)
+        return;
+    payload["protocolVersion"] = metasequoia::webview::Version;
+    if (!metasequoia::webview::Validate(payload, "server"))
+        return;
+    const std::wstring message = string_to_wstring(json::serialize(payload));
+    g_worker->Submit([message = std::move(message)]() -> SerialTaskQueue::Completion {
+        return [message = std::move(message)] {
+            if (g_webview)
+                g_webview->PostWebMessageAsJson(message.c_str());
+        };
+    });
+}
+
+// 更新模块的运行期状态 → 设置页契约的 updateResponse。即时回复与工作线程推送共用同一形状。
+json::value BuildUpdateResponse(const update::Status &status, const std::string &request_id, const std::string &action,
+                                bool ok)
+{
+    json::array versions;
+    for (const update::VersionEntry &entry : status.versions)
+    {
+        json::object item{
+            {"version", entry.version}, {"prerelease", entry.prerelease},      {"publishedAt", entry.published_at},
+            {"size", entry.size},       {"installerUrl", entry.installer_url}, {"mirrorUrl", entry.mirror_url},
+            {"sha256", entry.sha256},   {"releaseUrl", entry.release_url}};
+        // 只有发布清单声明了签名状态的版本才带这个字段，页面据此决定要不要显示未签名警告。
+        if (entry.signed_known)
+            item["signed"] = entry.is_signed;
+        versions.push_back(std::move(item));
+    }
+    json::object response{{"type", "updateResponse"},
+                          {"requestId", request_id},
+                          {"action", action},
+                          {"ok", ok},
+                          {"state", update::StateName(status.state)},
+                          {"currentVersion", status.current_version},
+                          {"message", status.message},
+                          {"lastCheckedAt", status.last_checked_at},
+                          {"versions", std::move(versions)}};
+    if (!status.version.empty())
+        response["version"] = status.version;
+    response["receivedBytes"] = status.received_bytes;
+    response["totalBytes"] = status.total_bytes;
+    response["percent"] = status.percent;
+    return json::value(std::move(response));
+}
+
 void PostWindowState(HWND hwnd)
 {
     PostValidatedServerMessage({
@@ -934,6 +1030,8 @@ bool ApplyConfigUpdate(const json::object &data)
         return SetConfiguredDiagnosticLogEnabled(json::value_to<bool>(data.at("value")));
     if (path == "general.tsf_diagnostic_log")
         return SetConfiguredTsfDiagnosticLogEnabled(json::value_to<bool>(data.at("value")));
+    if (path == "general.auto_update")
+        return SetConfiguredAutoUpdateEnabled(json::value_to<bool>(data.at("value")));
     if (path == "statistics.enabled")
         return SetConfiguredStatisticsEnabled(json::value_to<bool>(data.at("value")));
     if (path == "statistics.retention")
@@ -1514,6 +1612,74 @@ void HandleWebMessage(HWND hwnd, ICoreWebView2WebMessageReceivedEventArgs *args)
         {
             PostConfig(false);
         }
+        else if (type == "updateRequest")
+        {
+            // 应用内更新。检测与下载都是异步的：结果和进度经 updateResponse 推送
+            // （请求在途时模块拒绝重复请求，页面据此禁用按钮）；status/install/cancel 即时回复。
+            const auto &data = value.at("data").as_object();
+            const std::string request_id = json::value_to<std::string>(data.at("requestId"));
+            const std::string action = json::value_to<std::string>(data.at("action"));
+            std::string version;
+            if (const auto *entry = data.if_contains("version"); entry && entry->is_string())
+                version = json::value_to<std::string>(*entry);
+
+            if (action == "check")
+            {
+                auto callback = [request_id](const update::Status &status) {
+                    PostServerMessageAsync(BuildUpdateResponse(status, request_id, "check", true).as_object());
+                };
+                if (!update::StartCheck(std::move(callback)))
+                {
+                    PostValidatedServerMessage(
+                        BuildUpdateResponse(update::GetStatus(), request_id, "check", false).as_object());
+                }
+            }
+            else if (action == "status")
+            {
+                // 本进程空闲时合并 Server 进程的自动更新进度（状态文件共享）：
+                // 自动更新的下载/校验/安装由 Server 发起，设置页只负责显示。
+                PostValidatedServerMessage(
+                    BuildUpdateResponse(update::GetMergedStatus(), request_id, "status", true).as_object());
+            }
+            else if (action == "download")
+            {
+                auto callback = [request_id](const update::Status &status) {
+                    PostServerMessageAsync(BuildUpdateResponse(status, request_id, "download", true).as_object());
+                };
+                if (!update::StartDownload(version, std::move(callback)))
+                {
+                    PostValidatedServerMessage(
+                        BuildUpdateResponse(update::GetStatus(), request_id, "download", false).as_object());
+                }
+            }
+            else if (action == "install")
+            {
+                // 校验 + 拉起安装器都放到工作线程：安装包约 90MB，SHA256 校验要一两秒，
+                // 放在 UI 线程会把设置窗口卡住。UAC 提示由安装器自己弹，与窗口线程无关。
+                g_worker->Submit([request_id]() -> SerialTaskQueue::Completion {
+                    std::string error;
+                    const bool started = update::StartInstall(error);
+                    update::Status status = update::GetStatus();
+                    if (!started)
+                        status.message = error; // 启动失败时保留 Ready 态供重试，原因由这条消息带给页面
+                    json::value response = BuildUpdateResponse(status, request_id, "install", started);
+                    if (!metasequoia::webview::Validate(response, "server"))
+                        return {};
+                    auto message = string_to_wstring(json::serialize(response));
+                    return [message = std::move(message)] {
+                        if (g_webview)
+                            g_webview->PostWebMessageAsJson(message.c_str());
+                    };
+                });
+            }
+            else if (action == "cancel")
+            {
+                update::CancelDownload();
+                update::Status status = update::GetStatus();
+                status.message = "正在取消…";
+                PostValidatedServerMessage(BuildUpdateResponse(status, request_id, "cancel", true).as_object());
+            }
+        }
         else if (type == "configUpdate")
         {
             const auto data = value.at("data").as_object();
@@ -1870,6 +2036,11 @@ HRESULT OnControllerCreated(HWND hwnd, HRESULT result, ICoreWebView2CompositionC
                     ShowAboutSection();
                     g_open_about_on_ready = false;
                 }
+                if (g_show_update_progress_on_ready)
+                {
+                    ShowAutoUpdateProgress();
+                    g_show_update_progress_on_ready = false;
+                }
             }
             return S_OK;
         }).Get(),
@@ -2182,6 +2353,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_pa
         ActivateWindow(hwnd);
         ShowAboutSection();
         return 0;
+    case kShowUpdateProgress:
+        ActivateWindow(hwnd);
+        ShowAutoUpdateProgress();
+        return 0;
     case kScanSkinCatalog:
         PostConfig(true);
         return 0;
@@ -2388,7 +2563,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
     // The elevated half of the game-compat switch: write HKLM and exit, no window, no single-instance check.
     if (const int elevated_result = game_compat_name::RunElevatedApplyIfRequested(command_line); elevated_result >= 0)
         return elevated_result;
+
+    // 升级窗口期（见 utils/upgrade_guard.h）：安装器正在替换程序文件，设置页此刻
+    // 启动会锁住自己的 exe 让安装失败。安静退出。
+    if (update::IsUpgradeInProgress())
+        return 0;
+
     g_open_about_on_ready = command_line && std::wstring(command_line).find(L"--about") != std::wstring::npos;
+    // 自动更新的进度窗：Server 发现新版本后打开设置页「关于」分节并进入自动更新模式。
+    g_show_update_progress_on_ready =
+        command_line && std::wstring(command_line).find(L"--update-progress") != std::wstring::npos;
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     const HRESULT com_result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(com_result))
@@ -2402,7 +2586,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int show_
         HWND existing = FindWindowW(kWindowClass, nullptr);
         if (existing)
         {
-            PostMessageW(existing, g_open_about_on_ready ? kOpenAboutSection : kActivateExistingWindow, 0, 0);
+            const UINT requested_message = g_show_update_progress_on_ready ? kShowUpdateProgress
+                                           : g_open_about_on_ready         ? kOpenAboutSection
+                                                                           : kActivateExistingWindow;
+            PostMessageW(existing, requested_message, 0, 0);
             SetForegroundWindow(existing);
         }
         return 0;

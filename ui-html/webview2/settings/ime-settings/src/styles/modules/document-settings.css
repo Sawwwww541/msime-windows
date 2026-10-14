@@ -223,6 +223,58 @@
   opacity: .65;
 }
 
+/* 版本选择行：原生 select 配 forms.css 的控件外观，这里只补布局与宽度。 */
+.about-update-version-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.about-update-version-label {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.about-update-version-select {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.about-update-version-meta {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* 下载进度条。 indeterminate 之前也有一个确定宽度：0% 时轨道不可见。 */
+.about-update-progress {
+  margin-top: 14px;
+}
+
+.about-update-progress-track {
+  height: 6px;
+  overflow: hidden;
+  background: var(--border-color);
+  border-radius: 99px;
+}
+
+.about-update-progress-bar {
+  width: 0;
+  height: 100%;
+  background: var(--accent-color);
+  border-radius: 99px;
+  transition: width .2s ease-out;
+}
+
+.about-update-progress-text {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .about-update-dialog {
   width: min(390px, calc(100vw - 48px));
   padding: 0;

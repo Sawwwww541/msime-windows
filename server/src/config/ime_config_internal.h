@@ -133,6 +133,8 @@ extern int g_candidate_font_size;
 extern int g_candidate_window_preedit_font_size;
 extern std::atomic_bool g_diagnostic_log_enabled;
 extern std::atomic_bool g_tsf_diagnostic_log_enabled;
+// 应用内更新开关（[general] auto_update）：Server 启动时据此决定是否自动检测一次新版本。
+extern std::atomic_bool g_auto_update_enabled;
 extern std::atomic_bool g_statistics_enabled;
 extern std::string g_statistics_retention;
 extern std::string g_candidate_text_color;

@@ -209,6 +209,10 @@ bool GetConfiguredDiagnosticLogEnabled();
 bool SetConfiguredDiagnosticLogEnabled(bool enabled);
 bool GetConfiguredTsfDiagnosticLogEnabled();
 bool SetConfiguredTsfDiagnosticLogEnabled(bool enabled);
+// 应用内更新：开启后每次启动应用（Server 进程）自动检测一次新版本，发现新版本时在
+// 「关于」页提示。手动检查更新不受此开关影响。
+bool GetConfiguredAutoUpdateEnabled();
+bool SetConfiguredAutoUpdateEnabled(bool enabled);
 // 本机输入统计总开关，默认关闭：关闭时 Server 不创建也不写 stats.db。
 bool GetConfiguredStatisticsEnabled();
 bool SetConfiguredStatisticsEnabled(bool enabled);

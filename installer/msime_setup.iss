@@ -70,6 +70,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={commonpf64}\metasequoiaime\MetasequoiaIME.ico
 VersionInfoVersion={#MyAppVersion}
+; 安装日志常开：出问题时 %TEMP%\Setup Log*.txt 里有安装器的完整记录。应用内更新
+; 走静默安装，失败现场（文件被占用、静默中止、回滚）以前毫无痕迹，排查代价极高。
+SetupLogging=yes
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
@@ -207,6 +210,8 @@ const
   DataDirExclusiveTag = 'exclusive: adopted empty by the installer';
   { 用户选的目录里已有别的文件时，数据改放到这个子目录里。}
   DataDirSubfolderName = 'metasequoiaime';
+  { 升级过程中输入法可执行文件的隐藏后缀（见 HoldImeBinariesForUpgrade）。}
+  UpgradeHoldSuffix = '.update-hold';
 
   { WebView2 Evergreen Runtime 在 EdgeUpdate 里的固定客户端 ID。}
   WebView2ClientKey =
@@ -779,8 +784,8 @@ begin
     exit;
   end;
 
-  if (CurPageID = wpFinished) and (not WizardSilent) then
-    LaunchInstalledComponents;
+  { 完成页的输入法重启已统一挪到 CurStepChanged 的 ssDone：静默安装（应用内自动
+    更新）没有 Finish 可点，ssDone 是两条路唯一的共同出口。 }
 end;
 
 function UpdateReadyMemo(
@@ -937,6 +942,8 @@ begin
     (CompareText(Copy(FileName, 1, 20), 'config.toml.corrupt-') = 0) or
     (CompareText(FileName, '.ime-write-probe') = 0) or
     (CompareText(FileName, 'msime-write-probe.tmp') = 0) or
+    { 应用内更新的检测状态（Server 启动检测与设置页手动检测共用，跨升级保留无意义也不该误删别人的文件）}
+    (CompareText(FileName, 'update') = 0) or
     (CompareText(FileName, 'logs') = 0);
 end;
 
@@ -994,6 +1001,77 @@ begin
   { uninsdeletevalue 会在卸载过程中删掉 DataDir，所以要先读出来缓存住。}
   ResolvePreviousDataDir;
   Result := True;
+end;
+
+{ 升级窗口期的全局标记（与 server/src/utils/upgrade_guard.h 同一契约）：安装器在
+  停掉输入法进程之前写、装完或中止退出时清。窗口期内 TSF 的保活路径、Watchdog、
+  Server、设置进程都会安静退场。
+
+  没有它时的真实故障（2026-10-14 实机复现）：安装器杀掉进程后，TSF 的语言配置激活
+  通知立刻经 ShellExecute 把 Server 拉回来，Server 打开 msime.db 等数据文件，安装器
+  替换文件重试耗尽后在 /SUPPRESSMSGBOXES 下默认中止并回滚——用户看到的是
+  「下载完没更新」。 }
+procedure MarkUpgradeInProgress;
+begin
+  Log('Upgrade guard: marking in progress.');
+  RegWriteStringValue(HKLM, 'Software\Metasequoia\MetasequoiaIME', 'UpgradeInProgress',
+    GetDateTimeString('yyyymmddhhnnss', #0, #0));
+  Log('Upgrade guard: marker written.');
+end;
+
+procedure ClearUpgradeInProgress;
+begin
+  RegDeleteValue(HKLM, 'Software\Metasequoia\MetasequoiaIME', 'UpgradeInProgress');
+end;
+
+{ 把输入法可执行文件改名藏起来（进程已在上面被停掉，文件此时可改名）。
+
+  升级标记只有新版本进程认；从旧版本升级时，旧 TSF DLL 的保活路径（语言配置激活
+  通知）仍会按注册表里的 ServerPath 把 Server 拉回来——拉起来的若是尚未替换的旧
+  Server，就会打开 msime.db 让安装失败。改名后保活路径按原路径找不到文件直接放弃
+  （见 windows/src/IME/MetasequoiaIME.cpp 的 LaunchServerIfNeeded），随后 [Files]
+  会在原路径写入新文件。 }
+procedure HoldImeBinariesForUpgrade;
+var
+  ServerPath: String;
+  WatchdogPath: String;
+begin
+  Log('Upgrade guard: holding binaries.');
+  ServerPath := ExpandConstant('{commonpf64}\metasequoiaime\server\{#MyAppExeName}');
+  WatchdogPath := ExpandConstant('{commonpf64}\metasequoiaime\server\{#MyWatchdogName}');
+  if FileExists(ServerPath) then
+    RenameFile(ServerPath, ServerPath + UpgradeHoldSuffix);
+  if FileExists(WatchdogPath) then
+    RenameFile(WatchdogPath, WatchdogPath + UpgradeHoldSuffix);
+  Log('Upgrade guard: binaries held.');
+end;
+
+{ 收尾：安装成功（新文件已就位）删掉隐藏副本；中止（原文件缺失）改名还原。
+  同时充当自愈入口——上一次安装器被硬杀留下的 .update-hold 也在这里清掉。 }
+procedure ReleaseImeBinaryHolds;
+var
+  Real: String;
+  Hold: String;
+begin
+  Log('Upgrade guard: releasing binary holds.');
+  Real := ExpandConstant('{commonpf64}\metasequoiaime\server\{#MyAppExeName}');
+  Hold := Real + UpgradeHoldSuffix;
+  if FileExists(Hold) then
+  begin
+    if FileExists(Real) then
+      DeleteFile(Hold)
+    else
+      RenameFile(Hold, Real);
+  end;
+  Real := ExpandConstant('{commonpf64}\metasequoiaime\server\{#MyWatchdogName}');
+  Hold := Real + UpgradeHoldSuffix;
+  if FileExists(Hold) then
+  begin
+    if FileExists(Real) then
+      DeleteFile(Hold)
+    else
+      RenameFile(Hold, Real);
+  end;
 end;
 
 procedure StopProcess(const ImageName: String);
@@ -1630,6 +1708,7 @@ var
 begin
   { 静默安装不会走向导页，/DATADIR= 传进来的值在这里才第一次被检查，
     有别的文件时同样改用子目录。向导里选的值已经换过一次，这里再换是空操作。}
+  Log('PrepareToInstall: data dir checks.');
   DataDirValue := AdoptableDataDir(GetDataDir(''));
   DataDirProblem := DataDirRejectionReason(GetDataDir(''));
   if DataDirProblem <> '' then
@@ -1643,7 +1722,15 @@ begin
 
   { 先锁定本次目录名，再清理能够释放的旧版本 DLL。}
   VersionDirName := GetVersionDir('');
+  { 停进程之前先立升级标记：否则 TSF 的保活路径会在几秒内把 Server 拉回来，
+    重新锁住 msime.db，让随后的文件替换全部失败（见 MarkUpgradeInProgress）。}
+  MarkUpgradeInProgress;
+  { 上次安装器被硬杀可能留下 .update-hold，先自愈再继续。}
+  ReleaseImeBinaryHolds;
   StopImeProcesses;
+  { 进程停了、文件锁释放：把旧的可执行文件改名藏起来，连不认标记的旧版保活路径
+    也拉不起 Server（见 HoldImeBinariesForUpgrade）。}
+  HoldImeBinariesForUpgrade;
   { 进程停了才能动数据文件：msime_user.db 会被 Server 打开着。}
   DataDirProblem := MigrateUserDataDir(ResolvePreviousDataDir, GetDataDir(''));
   if DataDirProblem <> '' then
@@ -1715,7 +1802,27 @@ begin
       'Software\Microsoft\Windows\CurrentVersion\Run',
       'MetasequoiaImeWatchdog'
     );
+    { 词库回放已结束、文件替换全部完成：解除升级标记，后面的 ssDone 才能把输入法
+      重新拉起来（回放期间 Server 绝不能启动，见 MarkUpgradeInProgress）。}
+    ClearUpgradeInProgress;
+  end
+  else if CurStep = ssDone then
+  begin
+    { 装完拉起输入法。静默安装（应用内自动更新走这条路，没有完成页可点）也只有
+      这一个重启机会；带界面的安装原本靠完成页 Finish 点击，统一挪到这里，
+      两条路都只拉一次。 }
+    ClearUpgradeInProgress;
+    LaunchInstalledComponents;
   end;
+end;
+
+{ 安装中止（含静默失败）时也要清掉升级标记，否则 45 分钟内输入法进程都不会起来。
+  成功路径已在 ssPostInstall 清过，这里是兜底；同时收尾可执行文件的隐藏副本：
+  成功删掉，中止还原。 }
+procedure DeinitializeSetup;
+begin
+  ClearUpgradeInProgress;
+  ReleaseImeBinaryHolds;
 end;
 
 { 旧版设置页的「设为默认」写的是「替代默认输入法」。卸载后它仍指向水杉，系统设置里

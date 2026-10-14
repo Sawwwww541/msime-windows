@@ -107,6 +107,9 @@ function applyConfigData(data: Record<string, any>, target?: string): void {
   if (typeof data?.general?.tsf_diagnostic_log === 'boolean') {
     applyToggleState('tsfDiagnosticLogToggleBtn', data.general.tsf_diagnostic_log);
   }
+  if (typeof data?.general?.auto_update === 'boolean') {
+    applyToggleState('autoUpdateToggleBtn', data.general.auto_update);
+  }
   if (typeof data?.input?.word_to_character === 'boolean') {
     applyToggleState('wordToCharacterToggleBtn', data.input.word_to_character);
   }

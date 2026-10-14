@@ -65,11 +65,74 @@ std::wstring ReadServerPath()
     return path;
 }
 
+// 升级窗口期（与 server/src/utils/upgrade_guard.h 同一契约；TSF DLL 处在独立的
+// windows/ 树里，不能依赖 Server 的头文件，所以这里是一份等价实现）。安装器把
+// HKLM\Software\Metasequoia\MetasequoiaIME\UpgradeInProgress 写成 yyyymmddhhnnss，
+// 期间绝不能再拉起 Server：安装器正在替换程序文件，拉起来的 Server 会打开
+// msime.db 等数据文件，让安装器的文件替换失败并中止回滚（2026-10-14 实机复现）。
+// 标记解析失败或超过 45 分钟都视为不存在，避免安装器异常退出把输入法永久锁死。
+bool IsUpgradeInProgressForLaunch()
+{
+    wchar_t value[32]{};
+    DWORD bytes = sizeof(value) - sizeof(wchar_t);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"Software\\Metasequoia\\MetasequoiaIME", L"UpgradeInProgress",
+                     RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY, nullptr, value, &bytes) != ERROR_SUCCESS)
+    {
+        return false;
+    }
+    for (int index = 0; index < 14; ++index)
+    {
+        if (value[index] < L'0' || value[index] > L'9')
+            return false;
+    }
+    if (value[14] != L'\0')
+        return false;
+
+    const auto number = [&value](int offset, int digits) {
+        int parsed = 0;
+        for (int index = 0; index < digits; ++index)
+            parsed = parsed * 10 + (value[offset + index] - L'0');
+        return parsed;
+    };
+    SYSTEMTIME marked{};
+    marked.wYear = static_cast<WORD>(number(0, 4));
+    marked.wMonth = static_cast<WORD>(number(4, 2));
+    marked.wDay = static_cast<WORD>(number(6, 2));
+    marked.wHour = static_cast<WORD>(number(8, 2));
+    marked.wMinute = static_cast<WORD>(number(10, 2));
+    marked.wSecond = static_cast<WORD>(number(12, 2));
+    FILETIME marked_time{};
+    if (!SystemTimeToFileTime(&marked, &marked_time))
+        return false;
+
+    SYSTEMTIME local_now{};
+    GetLocalTime(&local_now);
+    FILETIME now{};
+    if (!SystemTimeToFileTime(&local_now, &now))
+        return false;
+
+    ULARGE_INTEGER marked_ticks{};
+    marked_ticks.LowPart = marked_time.dwLowDateTime;
+    marked_ticks.HighPart = marked_time.dwHighDateTime;
+    ULARGE_INTEGER now_ticks{};
+    now_ticks.LowPart = now.dwLowDateTime;
+    now_ticks.HighPart = now.dwHighDateTime;
+    const long long seconds = static_cast<long long>(now_ticks.QuadPart - marked_ticks.QuadPart) / 10'000'000LL;
+    return seconds >= -60 && seconds <= 45 * 60;
+}
+
 bool LaunchServerIfNeeded()
 {
     if (IsServerAlreadyRunning())
     {
         return true;
+    }
+
+    // 升级窗口期：安装器马上要替换程序文件，绝不能把 Server 拉起来锁住数据文件。
+    // 安装器装完会自己把输入法拉起来。
+    if (IsUpgradeInProgressForLaunch())
+    {
+        return false;
     }
 
     HANDLE launchMutex = CreateMutexW(nullptr, TRUE, SERVER_LAUNCH_MUTEX_NAME);

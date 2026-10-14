@@ -30,6 +30,18 @@
   <div class="section candidate-window-diagnostic-section">
     <div class="section-header">
       <div>
+        <div class="section-title">自动更新</div>
+        <div class="quick-phrase-description">开启后，每次启动应用时自动检测一次更新；发现新版本会直接下载安装包并在应用内拉起安装程序（约 90MB，安装需要管理员确认，取消则下次启动重试）。关闭时仍可手动点「检查更新」，自己选版本、自己点安装。</div>
+      </div>
+      <div class="ftb-toggle-btn" id="autoUpdateToggleBtn" role="switch" aria-checked="false" tabindex="0">
+        <div class="ftb-toggle-knob"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section candidate-window-diagnostic-section">
+    <div class="section-header">
+      <div>
         <div class="section-title">Server 端日志</div>
         <div class="quick-phrase-description">排查 Server 通信和输入延迟时开启。记录慢请求阶段、候选窗、悬浮工具栏、菜单、焦点会话和通信状态，不记录按键、输入内容或候选文本。日志默认保存到桌面的“水杉IME诊断日志.log”，复现后可直接发送该文件。</div>
       </div>
@@ -53,14 +65,23 @@
 
   <dialog id="about-update-dialog" class="about-update-dialog" aria-labelledby="about-update-dialog-title">
     <div class="about-update-dialog-body">
-      <div id="about-update-dialog-title" class="about-update-dialog-title">发现新版本</div>
-      <p>水杉 IME <strong id="about-update-dialog-version"></strong> 已发布，是否前往下载？</p>
+      <div id="about-update-dialog-title" class="about-update-dialog-title">应用内更新</div>
+      <p>选择要安装的版本，下载和安装都在应用内完成：</p>
+      <div class="about-update-version-row">
+        <label class="about-update-version-label" for="about-update-version-select">应用版本</label>
+        <select id="about-update-version-select" class="about-update-version-select"></select>
+      </div>
+      <div id="about-update-version-meta" class="about-update-version-meta"></div>
       <div id="about-update-dialog-trust" class="about-update-trust"></div>
+      <div id="about-update-progress" class="about-update-progress" hidden>
+        <div class="about-update-progress-track"><div id="about-update-progress-bar" class="about-update-progress-bar"></div></div>
+        <div id="about-update-progress-text" class="about-update-progress-text"></div>
+      </div>
     </div>
     <div class="about-update-dialog-actions">
       <button id="about-update-cancel" type="button" class="about-dialog-button">稍后</button>
-      <button id="about-update-mirror" type="button" class="about-dialog-button" hidden>国内镜像下载</button>
-      <button id="about-update-download" type="button" class="about-dialog-button about-dialog-primary">前往下载</button>
+      <button id="about-update-release" type="button" class="about-dialog-button" hidden>打开发布页</button>
+      <button id="about-update-download" type="button" class="about-dialog-button about-dialog-primary">立即更新</button>
     </div>
   </dialog>
 </div>

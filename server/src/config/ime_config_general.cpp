@@ -34,6 +34,19 @@ bool SetConfiguredTsfDiagnosticLogEnabled(bool enabled)
     return true;
 }
 
+bool GetConfiguredAutoUpdateEnabled()
+{
+    return g_auto_update_enabled.load(std::memory_order_relaxed);
+}
+
+bool SetConfiguredAutoUpdateEnabled(bool enabled)
+{
+    if (!WriteConfiguredValue("general", "auto_update", enabled ? "true" : "false"))
+        return false;
+    g_auto_update_enabled.store(enabled, std::memory_order_relaxed);
+    return true;
+}
+
 bool GetConfiguredStatisticsEnabled()
 {
     return g_statistics_enabled.load(std::memory_order_relaxed);

@@ -489,6 +489,37 @@
         "toolbar"
       ]
     },
+    "updateRequest": {
+      "surfaces": [
+        "settings"
+      ],
+      "data": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "check",
+              "status",
+              "download",
+              "install",
+              "cancel"
+            ]
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
     "candidate": {
       "surfaces": [
         "candidate"
@@ -1098,8 +1129,7 @@
         "message": {
           "type": "string"
         },
-        "overview": {
-          "type": "object",
+        "overview": {          "type": "object",
           "properties": {
             "hasData": {
               "type": "boolean"
@@ -1265,6 +1295,109 @@
         "message"
       ],
       "additionalProperties": true
+    },
+    "updateResponse": {
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "check",
+            "status",
+            "download",
+            "install",
+            "cancel"
+          ]
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "checking",
+            "upToDate",
+            "updateAvailable",
+            "downloading",
+            "verifying",
+            "ready",
+            "installing",
+            "error"
+          ]
+        },
+        "currentVersion": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "receivedBytes": {
+          "type": "integer"
+        },
+        "totalBytes": {
+          "type": "integer"
+        },
+        "percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "lastCheckedAt": {
+          "type": "string"
+        },
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "prerelease": {
+                "type": "boolean"
+              },
+              "publishedAt": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer"
+              },
+              "installerUrl": {
+                "type": "string"
+              },
+              "mirrorUrl": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string"
+              },
+              "signed": {
+                "type": "boolean"
+              },
+              "releaseUrl": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "version"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "requestId",
+        "action",
+        "ok",
+        "state"
+      ],
+      "additionalProperties": false
     }
   }
 }

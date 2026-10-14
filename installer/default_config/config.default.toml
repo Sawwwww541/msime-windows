@@ -13,6 +13,8 @@ theme = "dark"
 # 界面诊断日志总开关（默认关闭；不记录输入内容或候选文本）
 diagnostic_log = false
 tsf_diagnostic_log = false
+# 应用内更新：开启后每次启动应用自动检测一次新版本，发现新版本时在设置页「关于」提示（默认关闭）
+auto_update = false
 # 候选框诊断日志（旧键，与 diagnostic_log 同步；默认关闭）
 candidate_window_diagnostic_log = false
 # 悬浮工具栏

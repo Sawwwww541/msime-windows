@@ -128,6 +128,18 @@ set(MY_EXECUTABLE_NAME "MetasequoiaImeServer")
 set(WATCHDOG_EXECUTABLE_NAME "MetasequoiaImeWatchdog")
 set(DICTIONARY_REPLAY_EXECUTABLE_NAME "MetasequoiaImeDictionaryReplay")
 
+# 版本号真源是仓库根的 version.txt（release-please 管理，windows/ 的版本资源也由它注入）。
+# 应用内更新在运行期用它和发布清单比较，所以 configure 时读一次、生成 ime_version.h；
+# configure_file 带依赖，version.txt 变了会触发重新 configure。读不到时退 0.0.0，
+# 更新检测按「有新版」处理，不会把当前版本误判成最新。
+set(MSIME_VERSION "0.0.0")
+if(EXISTS "${MSIME_REPO_ROOT}/version.txt")
+    file(READ "${MSIME_REPO_ROOT}/version.txt" MSIME_VERSION_RAW)
+    string(STRIP "${MSIME_VERSION_RAW}" MSIME_VERSION)
+endif()
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ime_version.h.in"
+               "${CMAKE_BINARY_DIR}/generated/ime_version.h" @ONLY)
+
 add_executable(${WATCHDOG_EXECUTABLE_NAME} WIN32
     "./src/watchdog/main.cpp"
     "./src/watchdog/watchdog_protocol.h"
@@ -139,7 +151,7 @@ target_compile_definitions(${WATCHDOG_EXECUTABLE_NAME} PRIVATE
     NOMINMAX=1
     WIN32_LEAN_AND_MEAN=1
 )
-target_link_libraries(${WATCHDOG_EXECUTABLE_NAME} PRIVATE shell32 ole32)
+target_link_libraries(${WATCHDOG_EXECUTABLE_NAME} PRIVATE shell32 advapi32 ole32)
 if(MSVC)
     target_compile_options(${WATCHDOG_EXECUTABLE_NAME} PRIVATE /W4 /permissive-)
 endif()
@@ -257,6 +269,8 @@ set(SRC_FILES
     "./src/utils/shuangpin_preedit_display.h"
     "./src/utils/webview_utils.cpp"
     "./src/utils/webview_utils.h"
+    "./src/update/update_manager.cpp"
+    "./src/update/update_manager.h"
     "./src/utils/window_utils.cpp"
     "./src/utils/window_utils.h"
     "./src/webview2/windows_webview2.cpp"
@@ -317,6 +331,7 @@ add_executable(${MY_EXECUTABLE_NAME} WIN32
 target_include_directories(${PROJECT_NAME}
     PRIVATE
     "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/include"
+    "${CMAKE_BINARY_DIR}/generated"
     "${CMAKE_SOURCE_DIR}/src/voice-input"
     "${MSIME_ENGINE_DIR}/voice/third_party/miniaudio"
 )
@@ -513,11 +528,14 @@ add_executable(${SETTINGS_EXECUTABLE_NAME} WIN32
     "./src/utils/ime_paths.cpp"
     "./src/utils/network_proxy.cpp"
     "./src/utils/network_proxy.h"
+    "./src/update/update_manager.cpp"
+    "./src/update/update_manager.h"
     "./src/resource/resource.rc"
 )
 target_include_directories(${SETTINGS_EXECUTABLE_NAME}
     PRIVATE
     "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/include"
+    "${CMAKE_BINARY_DIR}/generated"
 )
 target_link_libraries(${SETTINGS_EXECUTABLE_NAME} PRIVATE
     MetasequoiaIme::Engine

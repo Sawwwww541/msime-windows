@@ -63,6 +63,8 @@ int g_candidate_font_size = 16;
 int g_candidate_window_preedit_font_size = 16;
 std::atomic_bool g_diagnostic_log_enabled{false};
 std::atomic_bool g_tsf_diagnostic_log_enabled{false};
+// 应用内更新：启动时自动检测一次新版本（默认关闭，开启后每次 Server 启动检测一次）。
+std::atomic_bool g_auto_update_enabled{false};
 // 本机输入统计，默认关闭。关闭是整个统计链路的门控：线程收到帧也只丢弃，
 // 不会创建 stats.db，这是隐私契约里可观察的那一半。
 std::atomic_bool g_statistics_enabled{false};
@@ -524,6 +526,7 @@ bool LoadImeConfig()
                                        std::memory_order_relaxed);
         g_tsf_diagnostic_log_enabled.store(tbl["general"]["tsf_diagnostic_log"].value_or(false),
                                            std::memory_order_relaxed);
+        g_auto_update_enabled.store(tbl["general"]["auto_update"].value_or(false), std::memory_order_relaxed);
         g_statistics_enabled.store(tbl["statistics"]["enabled"].value_or(false), std::memory_order_relaxed);
         {
             // 读侧对缺键与非法值一律回落 forever：一个手写坏值不能让自动清理误删数据。

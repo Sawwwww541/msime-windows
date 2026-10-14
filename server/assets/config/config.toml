@@ -14,6 +14,8 @@ theme = "dark"
 diagnostic_log = false
 # TSF 端批量诊断日志（默认关闭；不记录输入内容或候选文本）
 tsf_diagnostic_log = false
+# 应用内更新：开启后每次启动应用自动检测一次新版本（默认关闭）
+auto_update = false
 # 悬浮工具栏
 floating_toolbar = true
 # 切换输入状态时在光标附近显示短暂提示（与悬浮工具栏独立，默认关闭）

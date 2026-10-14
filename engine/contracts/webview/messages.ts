@@ -33,6 +33,7 @@ export type ClientMessage =
   | { "type": "defaultImeRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "status" | "setDefault" | "openSystemSettings" } }
   | { "type": "gameCompatRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "status" | "apply"; "enabled"?: boolean; "name"?: string } }
   | { "type": "openKeyboardPanel"; "protocolVersion"?: 1 }
+  | { "type": "updateRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "check" | "status" | "download" | "install" | "cancel"; "version"?: string } }
   | { "type": "candidate"; "protocolVersion"?: 1; "data": number }
   | { "type": "delete"; "protocolVersion"?: 1; "data": number }
   | { "type": "pin"; "protocolVersion"?: 1; "data": number }
@@ -73,7 +74,8 @@ export type ServerMessage =
   | { "type": "gameCompatResponse"; "protocolVersion"?: 1; "requestId": string; "action": string; "ok": boolean; "message": string; "enabled"?: boolean; "name"?: string; "registeredName"?: string; "defaultName"?: string }
   | { "type": "apiModelListResult"; "protocolVersion"?: 1; "requestId": string; "ok": boolean; "message": string; "models"?: Array<string> }
   | { "type": "dictionaryResponse"; "protocolVersion"?: 1; "requestId": string; "action"?: string; "dictionary"?: string; "ok": boolean; "message": string; "rows": Array<{ "word": string; "code"?: string; "display"?: string; "weight"?: number }>; "content"?: string; "filename"?: string; "offset"?: number; "hasMore"?: boolean; [key: string]: unknown }
-  | { "type": "statsResponse"; "protocolVersion"?: 1; "requestId": string; "action": string; "ok": boolean; "message": string; "overview"?: { "hasData": boolean; "firstDayKey": number; "lastDayKey": number; "days": number; "totalChars": number; "totalActiveMs": number; "todayDayKey": number; "todayChars": number; "todayActiveMs": number; "averagePerDay": number; "currentStreak": number; "longestStreak": number; "bestDayKey": number; "bestDayChars": number; "todaySpeed": number; "averageSpeed": number; "fastestSpeed": number; "fastestDayKey": number; "categories": { "cjk": number; "latin": number; "digit": number; "punct": number; "other": number }; "todayHourly": Array<number>; "daily": Array<{ "dayKey": number; "cjk": number; "latin": number; "digit": number; "punct": number; "other": number; "activeMs": number }> }; "removedDays"?: number; [key: string]: unknown };
+  | { "type": "statsResponse"; "protocolVersion"?: 1; "requestId": string; "action": string; "ok": boolean; "message": string; "overview"?: { "hasData": boolean; "firstDayKey": number; "lastDayKey": number; "days": number; "totalChars": number; "totalActiveMs": number; "todayDayKey": number; "todayChars": number; "todayActiveMs": number; "averagePerDay": number; "currentStreak": number; "longestStreak": number; "bestDayKey": number; "bestDayChars": number; "todaySpeed": number; "averageSpeed": number; "fastestSpeed": number; "fastestDayKey": number; "categories": { "cjk": number; "latin": number; "digit": number; "punct": number; "other": number }; "todayHourly": Array<number>; "daily": Array<{ "dayKey": number; "cjk": number; "latin": number; "digit": number; "punct": number; "other": number; "activeMs": number }> }; "removedDays"?: number; [key: string]: unknown }
+  | { "type": "updateResponse"; "protocolVersion"?: 1; "requestId": string; "action": "check" | "status" | "download" | "install" | "cancel"; "ok": boolean; "state": "idle" | "checking" | "upToDate" | "updateAvailable" | "downloading" | "verifying" | "ready" | "installing" | "error"; "currentVersion"?: string; "message"?: string; "version"?: string; "receivedBytes"?: number; "totalBytes"?: number; "percent"?: number; "lastCheckedAt"?: string; "versions"?: Array<{ "version": string; "prerelease"?: boolean; "publishedAt"?: string; "size"?: number; "installerUrl"?: string; "mirrorUrl"?: string; "sha256"?: string; "signed"?: boolean; "releaseUrl"?: string }> };
 export type SettingsMessage =
   | { "type": "configRequest"; "protocolVersion"?: 1 }
   | { "type": "skinCatalogRequest"; "protocolVersion"?: 1 }
@@ -105,7 +107,8 @@ export type SettingsMessage =
   | { "type": "statsRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "overview" | "clearAll" | "openDirectory" } }
   | { "type": "defaultImeRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "status" | "setDefault" | "openSystemSettings" } }
   | { "type": "gameCompatRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "status" | "apply"; "enabled"?: boolean; "name"?: string } }
-  | { "type": "openKeyboardPanel"; "protocolVersion"?: 1 };
+  | { "type": "openKeyboardPanel"; "protocolVersion"?: 1 }
+  | { "type": "updateRequest"; "protocolVersion"?: 1; "data": { "requestId": string; "action": "check" | "status" | "download" | "install" | "cancel"; "version"?: string } };
 declare global {
   var MsimeProtocol: {
     validate(message: unknown, direction: 'client' | 'server', surface?: string): boolean;

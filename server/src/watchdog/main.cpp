@@ -1,4 +1,5 @@
 #include "utils/single_instance.h"
+#include "utils/upgrade_guard.h"
 #include "watchdog/watchdog_protocol.h"
 
 #include <msctf.h>
@@ -148,6 +149,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return 1;
     if (single_instance.already_running())
         return 0;
+
+    // 升级窗口期（见 utils/upgrade_guard.h）：不启动、也不重生 Server——安装器正在
+    // 替换程序文件，任何一次重生都会重新锁住数据文件把安装拖垮。安装器装完会自己
+    // 拉起新的输入法进程。
+    if (update::IsUpgradeInProgress())
+        return 0;
+
     if (!WaitForMetasequoiaImeEnabledForCurrentUser())
         return 0;
 
@@ -160,6 +168,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     for (;;)
     {
         HANDLE server = FindRunningServer(server_path);
+        if (!server && update::IsUpgradeInProgress())
+        {
+            // 升级窗口期：保持沉默，等安装器结束（标记过期后自愈）。
+            Sleep(2'000);
+            continue;
+        }
         if (!server)
             server = StartServer(server_path, executable_directory);
         if (!server)

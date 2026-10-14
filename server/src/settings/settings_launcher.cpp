@@ -14,6 +14,7 @@ constexpr wchar_t kHandwritingPanelWindowClass[] = L"msimeui.HandwritingDemo";
 constexpr UINT kActivateSettings = WM_APP + 1;
 constexpr UINT kOpenSettingsAbout = WM_APP + 2;
 constexpr UINT kQuitSettings = WM_APP + 5;
+constexpr UINT kShowSettingsUpdateProgress = WM_APP + 6;
 
 bool OpenSiblingApplication(const wchar_t *executable_name, const wchar_t *window_class)
 {
@@ -79,6 +80,26 @@ bool OpenSettingsAboutApplication()
     const std::filesystem::path application_path =
         std::filesystem::path(module_path).parent_path() / L"MetasequoiaImeSettings.exe";
     const HINSTANCE result = ShellExecuteW(nullptr, L"open", application_path.c_str(), L"--about",
+                                           application_path.parent_path().c_str(), SW_SHOWNORMAL);
+    return reinterpret_cast<INT_PTR>(result) > 32;
+}
+
+// 自动更新的进度窗：设置页切到「关于」并进入自动更新模式。实际下载与安装都由
+// Server 进程发起，设置页通过 status 轮询显示进度（进度经状态文件共享）。
+bool OpenSettingsUpdateProgressApplication()
+{
+    if (const HWND existing_window = FindWindowW(kSettingsWindowClass, nullptr))
+        return ActivateSettingsWindow(existing_window, kShowSettingsUpdateProgress);
+
+    std::wstring module_path(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, module_path.data(), static_cast<DWORD>(module_path.size()));
+    if (length == 0 || length >= module_path.size())
+        return false;
+    module_path.resize(length);
+
+    const std::filesystem::path application_path =
+        std::filesystem::path(module_path).parent_path() / L"MetasequoiaImeSettings.exe";
+    const HINSTANCE result = ShellExecuteW(nullptr, L"open", application_path.c_str(), L"--update-progress",
                                            application_path.parent_path().c_str(), SW_SHOWNORMAL);
     return reinterpret_cast<INT_PTR>(result) > 32;
 }

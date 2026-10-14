@@ -20,10 +20,12 @@
 #include "engine/neural/rescore_worker.h"
 #include "utils/common_utils.h"
 #include "utils/single_instance.h"
+#include "utils/upgrade_guard.h"
 #include "session/session_factory.h"
 #include "statistics/stats_pipe.h"
 #include "webview2/windows_webview2.h"
 #include "voice-input/voice_input_service.h"
+#include "update/update_manager.h"
 
 namespace
 {
@@ -85,6 +87,16 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
                      _In_ int /*nCmdShow*/)
 {
     const bool pipe_probe = IsPipeProbe(lpCmdLine);
+
+    // 升级窗口期（见 utils/upgrade_guard.h）：安装器正在替换程序文件，本进程启动没有
+    // 意义，而且一打开 msime.db 等数据文件就会让安装器的文件替换失败、安装中止回滚。
+    // 安静退出；安装器装完会主动把输入法拉起来。
+    if (update::IsUpgradeInProgress())
+    {
+        (void)0;
+        return 0;
+    }
+
     CommonUtils::SingleInstanceGuard single_instance(L"Local\\MetasequoiaImeServer_SingleInstance");
     if (!single_instance.is_valid())
     {
@@ -170,6 +182,15 @@ int CALLBACK WinMain(_In_ HINSTANCE hInstance, _In_ HINSTANCE /*hPrevInstance*/,
         // windows or start UI-bound background services.
         Sleep(INFINITE);
     }
+
+    // 上次安装的收尾核对：正运行的版本就是刚才在装的版本 → 安装成功，记录下来并弹出
+    // 关于页让用户看到新版本号；没装上（中止/回滚）→ 清掉尝试记录，下次检测重试。
+    update::ReconcileAfterInstall();
+
+    // 应用内更新：开关开着时，延迟 30 秒在后台检测一次（等网络就绪）；发现新版本会
+    // 打开设置窗口展示进度、直接下载并拉起安装程序完成更新，UAC 确认即用户的决策点，
+    // 同一个版本不重复。
+    update::RunAutoUpdate();
 
     CloudIme::Start([](const std::string &candidate, const std::string &pinyin, uint64_t generation) {
         FanyNamedPipe::EnqueueCloudCandidate(candidate, pinyin, generation);
